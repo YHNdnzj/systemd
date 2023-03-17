@@ -15,6 +15,7 @@
 #include "conf-parser.h"
 #include "constants.h"
 #include "dirent-util.h"
+#include "dropin.h"
 #include "errno-list.h"
 #include "extract-word.h"
 #include "fd-util.h"
@@ -1473,16 +1474,18 @@ static int unit_file_search(
                 const LookupPaths *lp,
                 SearchFlags flags) {
 
-        const char *dropin_dir_name = NULL, *dropin_template_dir_name = NULL;
-        _cleanup_strv_free_ char **dirs = NULL, **files = NULL;
-        _cleanup_free_ char *template = NULL;
-        bool found_unit = false;
-        int r, result;
+        _cleanup_(hashmap_freep) Hashmap *id_map = NULL, *name_map = NULL;
+        _cleanup_set_free_ Set *path_cache = NULL;
+        _cleanup_set_free_free_ Set *unit_names = NULL;
+        _cleanup_strv_free_ char **dropins = NULL;
+        _cleanup_free_ char *file = NULL;
+        const char *fragment_path;
+        int r;
 
         assert(info);
         assert(lp);
 
-        /* Was this unit already loaded? */
+        /* Is this unit already loaded? */
         if (info->install_mode != _INSTALL_MODE_INVALID)
                 return 0;
 
@@ -1491,104 +1494,95 @@ static int unit_file_search(
 
         assert(info->name);
 
-        if (unit_name_is_valid(info->name, UNIT_NAME_INSTANCE)) {
-                r = unit_name_template(info->name, &template);
+        r = unit_file_build_name_map(lp, NULL, &id_map, &name_map, &path_cache);
+        if (r < 0)
+                return r;
+
+        r = unit_file_find_fragment(id_map, name_map, info->name, &fragment_path, &unit_names);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to find fragment for unit '%s': %m", info->name);
+        if (!fragment_path)
+                return log_debug_errno(SYNTHETIC_ERRNO(ENOENT), "Unit '%s' doesn't exist.", info->name);
+
+        r = path_extract_filename(fragment_path, &file);
+        if (r < 0)
+                return r;
+
+        if (streq(info->name, file)) {
+                r = unit_file_load_or_readlink(ctx, info, fragment_path, lp, flags);
                 if (r < 0)
-                        return r;
-        }
+                        return log_debug_errno(r, "Failed to load fragment '%s' for unit '%s': %m",
+                                               fragment_path, info->name);
 
-        STRV_FOREACH(p, lp->search_path) {
-                _cleanup_free_ char *path = NULL;
-
-                path = path_join(*p, info->name);
-                if (!path)
+                info->path = strdup(fragment_path);
+                if (!info->path)
                         return -ENOMEM;
+        } else {
+                _cleanup_free_ char *template = NULL;
 
-                r = unit_file_load_or_readlink(ctx, info, path, lp, flags);
-                if (r >= 0) {
-                        info->path = TAKE_PTR(path);
-                        result = r;
-                        found_unit = true;
-                        break;
-                } else if (!IN_SET(r, -ENOENT, -ENOTDIR, -EACCES))
-                        return r;
-        }
+                if (unit_name_is_valid(info->name, UNIT_NAME_INSTANCE)) {
+                        r = unit_name_template(info->name, &template);
+                        if (r < 0)
+                                return r;
+                }
 
-        if (!found_unit && template) {
-
-                /* Unit file doesn't exist, however instance
-                 * enablement was requested.  We will check if it is
-                 * possible to load template unit file. */
-
-                STRV_FOREACH(p, lp->search_path) {
+                STRV_FOREACH(search_path, lp->search_path) {
                         _cleanup_free_ char *path = NULL;
 
-                        path = path_join(*p, template);
+                        path = path_join(*search_path, info->name);
                         if (!path)
                                 return -ENOMEM;
 
                         r = unit_file_load_or_readlink(ctx, info, path, lp, flags);
+                        if (IN_SET(r, -ENOENT, -ENOTDIR, -EACCES))
+                                if (!template)
+                                        continue;
+                        else if (r < 0)
+                                return r;
                         if (r >= 0) {
                                 info->path = TAKE_PTR(path);
-                                result = r;
-                                found_unit = true;
                                 break;
-                        } else if (!IN_SET(r, -ENOENT, -ENOTDIR, -EACCES))
-                                return r;
+                        }
+
+                        if (template) {
+                                _cleanup_free_ char *template_path = NULL;
+
+                                template_path = path_join(*search_path, template);
+                                if (!template_path)
+                                        return -ENOMEM;
+
+                                r = unit_file_load_or_readlink(ctx, info, template_path, lp, flags);
+                                if (IN_SET(r, -ENOENT, -ENOTDIR, -EACCES))
+                                        continue;
+                                if (r < 0)
+                                        return r;
+
+                                info->path = TAKE_PTR(template_path);
+                                break;
+                        }
                 }
         }
 
-        if (!found_unit)
-                return log_debug_errno(SYNTHETIC_ERRNO(ENOENT),
-                                       "Cannot find unit %s%s%s.",
-                                       info->name, template ? " or " : "", strempty(template));
+        if (!info->path)
+                return log_debug_errno(SYNTHETIC_ERRNO(ENOENT), "Cannot find unit '%s'.", info->name);
 
         if (info->install_mode == INSTALL_MODE_MASKED)
-                return result;
+                return 0;
 
-        /* Search for drop-in directories */
-
-        dropin_dir_name = strjoina(info->name, ".d");
-        STRV_FOREACH(p, lp->search_path) {
-                char *path;
-
-                path = path_join(*p, dropin_dir_name);
-                if (!path)
-                        return -ENOMEM;
-
-                r = strv_consume(&dirs, path);
-                if (r < 0)
-                        return r;
-        }
-
-        if (template) {
-                dropin_template_dir_name = strjoina(template, ".d");
-                STRV_FOREACH(p, lp->search_path) {
-                        char *path;
-
-                        path = path_join(*p, dropin_template_dir_name);
-                        if (!path)
-                                return -ENOMEM;
-
-                        r = strv_consume(&dirs, path);
-                        if (r < 0)
-                                return r;
-                }
-        }
-
-        /* Load drop-in conf files */
-
-        r = conf_files_list_strv(&files, ".conf", NULL, 0, (const char**) dirs);
+        r = unit_file_find_dropin_paths(lp->root_dir, lp->search_path, path_cache,
+                                        ".d", ".conf",
+                                        info->name, unit_names, &dropins);
         if (r < 0)
-                return log_debug_errno(r, "Failed to get list of conf files: %m");
+                return log_debug_errno(r, "Failed to find drop-in files for unit '%s': %m", info->name);
 
-        STRV_FOREACH(p, files) {
-                r = unit_file_load_or_readlink(ctx, info, *p, lp, flags | SEARCH_DROPIN);
+        STRV_FOREACH(dropin, dropins) {
+                r = unit_file_load_or_readlink(ctx, info, *dropin, lp, flags | SEARCH_DROPIN);
                 if (r < 0)
-                        return log_debug_errno(r, "Failed to load conf file \"%s\": %m", *p);
+                        return log_debug_errno(r, "Failed to load drop-in file '%s' for unit '%s': %m",
+                                               *dropin, info->name);
         }
 
-        return result;
+        return 0;
 }
 
 static int install_info_follow(
