@@ -1478,7 +1478,7 @@ static int unit_file_search(
         _cleanup_set_free_ Set *path_cache = NULL;
         _cleanup_set_free_free_ Set *unit_names = NULL;
         _cleanup_strv_free_ char **dropins = NULL;
-        _cleanup_free_ char *file = NULL;
+        _cleanup_free_ char *file = NULL, *template = NULL;
         const char *fragment_path;
         int r;
 
@@ -1504,62 +1504,45 @@ static int unit_file_search(
         if (!fragment_path)
                 return log_debug_errno(SYNTHETIC_ERRNO(ENOENT), "Unit '%s' doesn't exist.", info->name);
 
-        r = path_extract_filename(fragment_path, &file);
-        if (r < 0)
-                return r;
-
-        if (streq(info->name, file)) {
-                r = unit_file_load_or_readlink(ctx, info, fragment_path, lp, flags);
+        if (unit_name_is_valid(info->name, UNIT_NAME_INSTANCE)) {
+                r = unit_name_template(info->name, &template);
                 if (r < 0)
-                        return log_debug_errno(r, "Failed to load fragment '%s' for unit '%s': %m",
-                                               fragment_path, info->name);
+                        return r;
+        }
 
-                info->path = strdup(fragment_path);
-                if (!info->path)
+        STRV_FOREACH(search_path, lp->search_path) {
+                _cleanup_free_ char *path = NULL;
+
+                path = path_join(*search_path, info->name);
+                if (!path)
                         return -ENOMEM;
-        } else {
-                _cleanup_free_ char *template = NULL;
 
-                if (unit_name_is_valid(info->name, UNIT_NAME_INSTANCE)) {
-                        r = unit_name_template(info->name, &template);
-                        if (r < 0)
-                                return r;
+                r = unit_file_load_or_readlink(ctx, info, path, lp, flags);
+                if (IN_SET(r, -ENOENT, -ENOTDIR, -EACCES))
+                        if (!template)
+                                continue;
+                else if (r < 0)
+                        return r;
+                if (r >= 0) {
+                        info->path = TAKE_PTR(path);
+                        break;
                 }
 
-                STRV_FOREACH(search_path, lp->search_path) {
-                        _cleanup_free_ char *path = NULL;
+                if (template) {
+                        _cleanup_free_ char *template_path = NULL;
 
-                        path = path_join(*search_path, info->name);
-                        if (!path)
+                        template_path = path_join(*search_path, template);
+                        if (!template_path)
                                 return -ENOMEM;
 
-                        r = unit_file_load_or_readlink(ctx, info, path, lp, flags);
+                        r = unit_file_load_or_readlink(ctx, info, template_path, lp, flags);
                         if (IN_SET(r, -ENOENT, -ENOTDIR, -EACCES))
-                                if (!template)
-                                        continue;
-                        else if (r < 0)
+                                continue;
+                        if (r < 0)
                                 return r;
-                        if (r >= 0) {
-                                info->path = TAKE_PTR(path);
-                                break;
-                        }
 
-                        if (template) {
-                                _cleanup_free_ char *template_path = NULL;
-
-                                template_path = path_join(*search_path, template);
-                                if (!template_path)
-                                        return -ENOMEM;
-
-                                r = unit_file_load_or_readlink(ctx, info, template_path, lp, flags);
-                                if (IN_SET(r, -ENOENT, -ENOTDIR, -EACCES))
-                                        continue;
-                                if (r < 0)
-                                        return r;
-
-                                info->path = TAKE_PTR(template_path);
-                                break;
-                        }
+                        info->path = TAKE_PTR(template_path);
+                        break;
                 }
         }
 
