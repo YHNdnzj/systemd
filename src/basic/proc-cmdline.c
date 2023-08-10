@@ -13,6 +13,7 @@
 #include "parse-util.h"
 #include "proc-cmdline.h"
 #include "process-util.h"
+#include "set.h"
 #include "string-util.h"
 #include "strv.h"
 #include "virt.h"
@@ -197,10 +198,6 @@ static int proc_cmdline_parse_strv(char **args, proc_cmdline_parse_t parse_item,
 
         assert(parse_item);
 
-        /* The PROC_CMDLINE_VALUE_OPTIONAL flag doesn't really make sense for proc_cmdline_parse(), let's
-         * make this clear. */
-        assert(!FLAGS_SET(flags, PROC_CMDLINE_VALUE_OPTIONAL));
-
         STRV_FOREACH(word, args) {
                 char *key, *value;
 
@@ -225,6 +222,10 @@ int proc_cmdline_parse(proc_cmdline_parse_t parse_item, void *data, ProcCmdlineF
         int r;
 
         assert(parse_item);
+
+        /* The PROC_CMDLINE_VALUE_OPTIONAL and PROC_CMDLINE_MISSING_TO_FATAL flags doesn't really make sense for
+         * proc_cmdline_parse(), let's make this clear. */
+        assert(!(flags & (PROC_CMDLINE_VALUE_OPTIONAL|PROC_CMDLINE_MISSING_TO_FATAL)));
 
         /* We parse the EFI variable first, because later settings have higher priority. */
 
@@ -334,7 +335,7 @@ static int cmdline_get_key(char **args, const char *key, ProcCmdlineFlags flags,
 
 int proc_cmdline_get_key(const char *key, ProcCmdlineFlags flags, char **ret_value) {
         _cleanup_strv_free_ char **args = NULL;
-        _cleanup_free_ char *line = NULL, *v = NULL;
+        _cleanup_free_ char *v = NULL;
         int r;
 
         /* Looks for a specific key on the kernel command line and (with lower priority) the EFI variable.
@@ -361,35 +362,48 @@ int proc_cmdline_get_key(const char *key, ProcCmdlineFlags flags, char **ret_val
         if (r < 0)
                 return r;
 
-        if (FLAGS_SET(flags, PROC_CMDLINE_IGNORE_EFI_OPTIONS)) /* Shortcut */
-                return cmdline_get_key(args, key, flags, ret_value);
-
         r = cmdline_get_key(args, key, flags, ret_value ? &v : NULL);
         if (r < 0)
                 return r;
-        if (r > 0) {
-                if (ret_value)
-                        *ret_value = TAKE_PTR(v);
+        if (r > 0)
+                goto found;
 
-                return r;
+        if (!FLAGS_SET(flags, PROC_CMDLINE_IGNORE_EFI_OPTIONS)) {
+                _cleanup_free_ char *line = NULL;
+
+                r = systemd_efi_options_variable(&line);
+                if (r == -ENODATA)
+                        goto missing;
+                if (r < 0)
+                        return r;
+
+                args = strv_free(args);
+                r = strv_split_full(&args, line, NULL, EXTRACT_UNQUOTE|EXTRACT_RELAX|EXTRACT_RETAIN_ESCAPE);
+                if (r < 0)
+                        return r;
+
+                /* No need to mfree(v) before use, we'd have already returned if found something. */
+                r = cmdline_get_key(args, key, flags, ret_value ? &v : NULL);
+                if (r < 0)
+                        return r;
+                if (r > 0)
+                        goto found;
         }
 
-        r = systemd_efi_options_variable(&line);
-        if (r == -ENODATA) {
-                if (ret_value)
-                        *ret_value = NULL;
+missing:
+        if (FLAGS_SET(flags, PROC_CMDLINE_MISSING_TO_FATAL))
+                return -ENOKEY;
 
-                return false; /* Not found */
-        }
-        if (r < 0)
-                return r;
+        if (ret_value)
+                *ret_value = NULL;
 
-        args = strv_free(args);
-        r = strv_split_full(&args, line, NULL, EXTRACT_UNQUOTE|EXTRACT_RELAX|EXTRACT_RETAIN_ESCAPE);
-        if (r < 0)
-                return r;
+        return false;
 
-        return cmdline_get_key(args, key, flags, ret_value);
+found:
+        if (ret_value)
+                *ret_value = TAKE_PTR(v);
+
+        return true;
 }
 
 int proc_cmdline_get_bool(const char *key, ProcCmdlineFlags flags, bool *ret) {
@@ -401,7 +415,7 @@ int proc_cmdline_get_bool(const char *key, ProcCmdlineFlags flags, bool *ret) {
         r = proc_cmdline_get_key(key, flags | PROC_CMDLINE_VALUE_OPTIONAL, &v);
         if (r < 0)
                 return r;
-        if (r == 0) { /* key not specified at all */
+        if (r == 0) { /* key not specified at all and PROC_CMDLINE_MISSING_TO_FATAL not set */
                 *ret = false;
                 return 0;
         }
@@ -417,8 +431,10 @@ int proc_cmdline_get_bool(const char *key, ProcCmdlineFlags flags, bool *ret) {
         return 1;
 }
 
-static int cmdline_get_key_ap(ProcCmdlineFlags flags, char* const* args, va_list ap) {
+static int cmdline_get_key_ap(ProcCmdlineFlags flags, char* const* args, Set **processed, va_list ap) {
         int r, ret = 0;
+
+        assert(!FLAGS_SET(flags, PROC_CMDLINE_MISSING_TO_FATAL) || processed);
 
         for (;;) {
                 char **v;
@@ -443,6 +459,12 @@ static int cmdline_get_key_ap(ProcCmdlineFlags flags, char* const* args, va_list
                                 if (r < 0)
                                         return r;
 
+                                if (FLAGS_SET(flags, PROC_CMDLINE_MISSING_TO_FATAL)) {
+                                        r = set_put_strdup(processed, k);
+                                        if (r < 0)
+                                                return r;
+                                }
+
                                 ret++;
                         }
                 }
@@ -453,11 +475,12 @@ static int cmdline_get_key_ap(ProcCmdlineFlags flags, char* const* args, va_list
 
 int proc_cmdline_get_key_many_internal(ProcCmdlineFlags flags, ...) {
         _cleanup_strv_free_ char **args = NULL;
-        int r, ret = 0;
+        _cleanup_set_free_ Set *processed = NULL;
+        int n_entries = 0, r, ret = 0;
         va_list ap;
 
-        /* The PROC_CMDLINE_VALUE_OPTIONAL flag doesn't really make sense for proc_cmdline_get_key_many(), let's make
-         * this clear. */
+        /* The PROC_CMDLINE_VALUE_OPTIONAL flag doesn't really make sense for proc_cmdline_get_key_many(),
+         * let's make this clear. */
         assert(!FLAGS_SET(flags, PROC_CMDLINE_VALUE_OPTIONAL));
 
         /* This call may clobber arguments on failure! */
@@ -474,7 +497,7 @@ int proc_cmdline_get_key_many_internal(ProcCmdlineFlags flags, ...) {
                                 return r;
 
                         va_start(ap, flags);
-                        r = cmdline_get_key_ap(flags, args, ap);
+                        r = cmdline_get_key_ap(flags, args, &processed, ap);
                         va_end(ap);
                         if (r < 0)
                                 return r;
@@ -489,10 +512,14 @@ int proc_cmdline_get_key_many_internal(ProcCmdlineFlags flags, ...) {
                 return r;
 
         va_start(ap, flags);
-        r = cmdline_get_key_ap(flags, args, ap);
+        n_entries++;
+        r = cmdline_get_key_ap(flags, args, &processed, ap);
         va_end(ap);
         if (r < 0)
                 return r;
+
+        if (FLAGS_SET(flags, PROC_CMDLINE_MISSING_TO_FATAL) && set_size(processed) < n_entries / 2)
+                return -ENOKEY;
 
         return ret + r;
 }

@@ -141,6 +141,7 @@ TEST(proc_cmdline_get_key) {
         assert_se(proc_cmdline_get_key("foo-bar", 0, &value) > 0 && streq_ptr(value, "quux"));
         value = mfree(value);
         assert_se(proc_cmdline_get_key("foo-bar", PROC_CMDLINE_VALUE_OPTIONAL, &value) > 0 && streq_ptr(value, "quux"));
+        assert_se(proc_cmdline_get_key("abc", PROC_CMDLINE_MISSING_TO_FATAL, &value) == -ENOKEY && streq_ptr(value, "quux"));
         value = mfree(value);
         assert_se(proc_cmdline_get_key("foo-bar", 0, NULL) == 0);
         assert_se(proc_cmdline_get_key("foo-bar", PROC_CMDLINE_VALUE_OPTIONAL, NULL) == -EINVAL);
