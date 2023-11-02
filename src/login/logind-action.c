@@ -133,6 +133,34 @@ const HandleActionData* handle_action_lookup(HandleAction action) {
         return &handle_action_data_table[action];
 }
 
+static const HandleAction sleep_automated_actions[] = {
+        HANDLE_SUSPEND_THEN_HIBERNATE,
+        HANDLE_HYBRID_SLEEP,
+        HANDLE_HIBERNATE,
+        HANDLE_SUSPEND,
+};
+
+HandleAction handle_action_sleep_select(HandleActionSleepMask *mask) {
+        assert(mask);
+
+        if (*mask == 0)
+                return _HANDLE_ACTION_INVALID;
+
+        FOREACH_ARRAY(i, actions, ELEMENTSOF(actions)) {
+                HandleActionSleepMask a = 1U << *i;
+
+                if (!FLAGS_SET(*mask, a))
+                        continue;
+
+                if (sleep_supported(handle_action_lookup(*i)->sleep_operation) > 0)
+                        return *i;
+
+                *mask &= ~a;
+        }
+
+        return _HANDLE_ACTION_INVALID;
+}
+
 static int handle_action_sleep_execute(
                 Manager *m,
                 HandleAction handle,
@@ -140,9 +168,30 @@ static int handle_action_sleep_execute(
                 bool is_edge) {
 
         bool supported;
+        int r;
 
         assert(m);
         assert(HANDLE_ACTION_IS_SLEEP(handle));
+
+        if (handle == HANDLE_SLEEP) {
+                HandleActionSleepMask mask = m->handle_action_sleep_mask;
+
+                for (;;) {
+                        HandleAction a;
+
+                        a = handle_action_sleep_select(&mask);
+                        if (a < 0)
+                                return log_warning_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
+                                                         "None of the configured sleep operations are supported, ignoring.");
+
+                        r = handle_action_sleep_execute(m, a, ignore_inhibited, is_edge);
+                        if (r >= 0)
+                                return r;
+
+                        log_warning_errno(r,
+                                          "Failed to sleep through %s, ignoring: %m", handle_action_to_string(a));
+                }
+        }
 
         if (handle == HANDLE_SUSPEND)
                 supported = sleep_supported(SLEEP_SUSPEND) > 0;
@@ -193,6 +242,7 @@ static int handle_action_execute(
         int r;
 
         assert(m);
+        assert(!IN_SET(handle, HANDLE_IGNORED, HANDLE_LOCK, HANDLE_SLEEP));
 
         if (handle == HANDLE_KEXEC && access(KEXEC, X_OK) < 0)
                 return log_warning_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
@@ -301,8 +351,9 @@ static const char* const handle_action_verb_table[_HANDLE_ACTION_MAX] = {
         [HANDLE_SOFT_REBOOT]            = "soft-reboot",
         [HANDLE_SUSPEND]                = "suspend",
         [HANDLE_HIBERNATE]              = "hibernate",
-        [HANDLE_HYBRID_SLEEP]           = "enter hybrid sleep",
+        [HANDLE_HYBRID_SLEEP]           = "hybrid sleep",
         [HANDLE_SUSPEND_THEN_HIBERNATE] = "suspend and later hibernate",
+        [HANDLE_SLEEP]                  = "sleep",
         [HANDLE_FACTORY_RESET]          = "perform a factory reset",
         [HANDLE_LOCK]                   = "be locked",
 };
@@ -322,9 +373,66 @@ static const char* const handle_action_table[_HANDLE_ACTION_MAX] = {
         [HANDLE_HIBERNATE]              = "hibernate",
         [HANDLE_HYBRID_SLEEP]           = "hybrid-sleep",
         [HANDLE_SUSPEND_THEN_HIBERNATE] = "suspend-then-hibernate",
+        [HANDLE_SLEEP]                  = "sleep",
         [HANDLE_FACTORY_RESET]          = "factory-reset",
         [HANDLE_LOCK]                   = "lock",
 };
 
 DEFINE_STRING_TABLE_LOOKUP(handle_action, HandleAction);
 DEFINE_CONFIG_PARSE_ENUM(config_parse_handle_action, handle_action, HandleAction, "Failed to parse handle action setting");
+
+int config_parse_handle_action_sleep(
+                const char *unit,
+                const char *filename,
+                unsigned line,
+                const char *section,
+                unsigned section_line,
+                const char *lvalue,
+                int ltype,
+                const char *rvalue,
+                void *data,
+                void *userdata) {
+
+        HandleActionSleepMask *mask = ASSERT_PTR(data);
+        _cleanup_strv_free_ char **actions = NULL;
+
+        assert(filename);
+        assert(lvalue);
+        assert(rvalue);
+
+        if (isempty(rvalue))
+                goto empty;
+
+        if (strv_split_full(&actions, rvalue, NULL, EXTRACT_UNQUOTE|EXTRACT_RETAIN_ESCAPE) < 0)
+                return log_oom();
+
+        *mask = 0;
+
+        STRV_FOREACH(action, actions)
+                HandleAction a;
+
+                a = handle_action_from_string(*action);
+                if (a < 0) {
+                        log_syntax(unit, LOG_WARNING, filename, line, a,
+                                   "Failed to parse SleepOperation '%s', ignoring: %m", *action);
+                        continue;
+                }
+
+                if (!HANDLE_ACTION_IS_SLEEP(a)) {
+                        log_syntax(unit, LOG_WARNING, filename, line, 0,
+                                   "HandleAction '%s' is not a sleep operation, ignoring: %m", *action);
+                        continue;
+                }
+
+                *mask |= 1U << a;
+        }
+
+        if (*mask == 0)
+                goto empty;
+
+        return 0;
+
+empty:
+        *mask = HANDLE_ACTION_SLEEP_MASK_DEFAULT;
+        return 0;
+}

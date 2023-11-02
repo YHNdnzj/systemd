@@ -2048,12 +2048,26 @@ static int method_do_shutdown_or_sleep(
         else if ((flags & SD_LOGIND_REBOOT_VIA_KEXEC) && kexec_loaded())
                 a = handle_action_lookup(HANDLE_KEXEC);
 
-        /* Don't allow multiple jobs being executed at the same time */
-        if (m->delayed_action)
-                return sd_bus_error_setf(error, BUS_ERROR_OPERATION_IN_PROGRESS,
-                                         "There's already a shutdown or sleep operation in progress");
+        if (action == HANDLE_SLEEP) {
+                HandleActionSleepMask mask = m->handle_action_sleep_mask;
 
-        if (a->sleep_operation >= 0) {
+                for (;;) {
+                        HandleAction selected;
+
+                        selected = handle_action_sleep_select(&mask);
+                        if (selected < 0)
+                                return log_warning_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
+                                                         "None of the configured sleep operations are supported, ignoring.");
+
+                        r = handle_action_sleep_execute(m, a, ignore_inhibited, is_edge);
+                        if (r >= 0)
+                                return r;
+
+                        log_warning_errno(r,
+                                          "Failed to sleep through %s, ignoring: %m", handle_action_to_string(a));
+                }
+
+        } else if (HANDLE_ACTION_IS_SLEEP(action)) {
                 SleepSupport support;
 
                 r = sleep_supported_full(a->sleep_operation, &support);
@@ -2175,6 +2189,16 @@ static int method_suspend_then_hibernate(sd_bus_message *message, void *userdata
                         m, message,
                         HANDLE_SUSPEND_THEN_HIBERNATE,
                         sd_bus_message_is_method_call(message, NULL, "SuspendThenHibernateWithFlags"),
+                        error);
+}
+
+static int method_suspend_then_hibernate(sd_bus_message *message, void *userdata, sd_bus_error *error) {
+        Manager *m = userdata;
+
+        return method_do_shutdown_or_sleep(
+                        m, message,
+                        HANDLE_SLEEP,
+                        /* with_flags = */ true,
                         error);
 }
 
@@ -2546,8 +2570,20 @@ static int method_can_shutdown_or_sleep(
 
         assert_se(a = handle_action_lookup(action));
 
-        if (a->sleep_operation >= 0) {
+        if (action == HANDLE_SLEEP) {
+                HandleActionSleepMask mask = m->handle_action_sleep_mask;
+                HandleAction selected;
+
+                selected = handle_action_sleep_select(&mask);
+                if (selected < 0)
+                        return sd_bus_reply_method_return(message, "s", "na");
+
+                assert_se(a = handle_action_lookup(selected));
+
+        } else if (HANDLE_ACTION_IS_SLEEP(action)) {
                 SleepSupport support;
+
+                assert(a->sleep_operation >= 0);
 
                 r = sleep_supported_full(a->sleep_operation, &support);
                 if (r < 0)
@@ -2676,6 +2712,12 @@ static int method_can_suspend_then_hibernate(sd_bus_message *message, void *user
         Manager *m = userdata;
 
         return method_can_shutdown_or_sleep(m, message, HANDLE_SUSPEND_THEN_HIBERNATE, error);
+}
+
+static int method_can_sleep(sd_bus_message *message, void *userdata, sd_bus_error *error) {
+        Manager *m = userdata;
+
+        return method_can_shutdown_or_sleep(m, message, HANDLE_SLEEP, error);
 }
 
 static int property_get_reboot_parameter(
@@ -3781,6 +3823,11 @@ static const sd_bus_vtable manager_vtable[] = {
                                 SD_BUS_NO_RESULT,
                                 method_suspend_then_hibernate,
                                 SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_ARGS("Sleep",
+                                SD_BUS_ARGS("t", flags),
+                                SD_BUS_NO_RESULT,
+                                method_sleep,
+                                SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("CanPowerOff",
                                 SD_BUS_NO_ARGS,
                                 SD_BUS_RESULT("s", result),
@@ -3815,6 +3862,11 @@ static const sd_bus_vtable manager_vtable[] = {
                                 SD_BUS_NO_ARGS,
                                 SD_BUS_RESULT("s", result),
                                 method_can_suspend_then_hibernate,
+                                SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_ARGS("CanSleep",
+                                SD_BUS_NO_ARGS,
+                                SD_BUS_RESULT("s", result),
+                                method_can_sleep,
                                 SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("ScheduleShutdown",
                                 SD_BUS_ARGS("s", type, "t", usec),
