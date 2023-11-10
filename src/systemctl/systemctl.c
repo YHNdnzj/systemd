@@ -91,6 +91,7 @@ bool arg_full = false;
 bool arg_recursive = false;
 bool arg_with_dependencies = false;
 bool arg_show_transaction = false;
+bool arg_failed = false;
 int arg_force = 0;
 bool arg_ask_password = false;
 bool arg_runtime = false;
@@ -263,7 +264,8 @@ static int systemctl_help(void) {
                "  -M --machine=CONTAINER Operate on a local container\n"
                "  -t --type=TYPE         List units of a particular type\n"
                "     --state=STATE       List units with particular LOAD or SUB or ACTIVE state\n"
-               "     --failed            Shortcut for --state=failed\n"
+               "     --failed            Only start/restart failed units or shortcut for\n"
+               "                         --state=failed\n"
                "  -p --property=NAME     Show only properties by this name\n"
                "  -P NAME                Equivalent to --value --property=NAME\n"
                "  -a --all               Show all properties/all units currently in memory,\n"
@@ -725,6 +727,8 @@ static int systemctl_parse_argv(int argc, char *argv[]) {
                 case ARG_FAILED:
                         if (strv_extend(&arg_states, "failed") < 0)
                                 return log_oom();
+
+                        arg_failed = true;
 
                         break;
 

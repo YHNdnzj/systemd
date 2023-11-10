@@ -280,6 +280,10 @@ int verb_start(int argc, char *argv[], void *userdata) {
                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
                                        "--wait may only be used with the 'start' or 'restart' commands.");
 
+        if (arg_failed && !STR_IN_SET(argv[0], "start", "restart"))
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                       "--failed may only be used with the 'start' or 'restart' commands.");
+
         /* We cannot do sender tracking on the private bus, so we need the full one for RefUnit to implement
          * --wait */
         r = acquire_bus(arg_wait ? BUS_FULL : BUS_MANAGER, &bus);
@@ -371,6 +375,17 @@ int verb_start(int argc, char *argv[], void *userdata) {
         else
                 STRV_FOREACH(name, names) {
                         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+
+                        if (arg_failed) {
+                                UnitActiveState active_state;
+
+                                r = get_state_one_unit(bus, *name, &active_state);
+                                if (r < 0)
+                                        return r;
+
+                                if (active_state != UNIT_FAILED)
+                                        continue;
+                        }
 
                         r = start_unit_one(bus, method, job_type, *name, mode, &error, w, wu);
                         if (ret == EXIT_SUCCESS && r < 0)
