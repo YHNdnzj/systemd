@@ -1409,6 +1409,47 @@ bool exec_context_maintains_privileges(const ExecContext *c) {
         return false;
 }
 
+bool exec_context_has_address_families(const ExecContext *c) {
+        assert(c);
+
+        return c->address_families_allow_list ||
+                !set_isempty(c->address_families);
+}
+
+bool exec_context_has_syscall_filters(const ExecContext *c) {
+        assert(c);
+
+        return c->syscall_allow_list ||
+                !hashmap_isempty(c->syscall_filter);
+}
+
+bool exec_context_has_syscall_logs(const ExecContext *c) {
+        assert(c);
+
+        return c->syscall_log_allow_list ||
+                !hashmap_isempty(c->syscall_log);
+}
+
+bool exec_context_has_seccomp(const ExecContext *c) {
+        assert(c);
+
+        return c->lock_personality ||
+                c->memory_deny_write_execute ||
+                c->private_devices ||
+                c->protect_clock ||
+                c->protect_hostname ||
+                c->protect_kernel_tunables ||
+                c->protect_kernel_modules ||
+                c->protect_kernel_logs ||
+                exec_context_has_address_families(c) ||
+                exec_context_restrict_namespaces_set(c) ||
+                c->restrict_realtime ||
+                c->restrict_suid_sgid ||
+                !set_isempty(c->syscall_archs) ||
+                exec_context_has_syscall_filters(c) ||
+                exec_context_has_syscall_logs(c);
+}
+
 int exec_context_get_effective_ioprio(const ExecContext *c) {
         int p;
 

@@ -505,6 +505,10 @@ const char* exec_context_fdname(const ExecContext *c, int fd_index);
 
 bool exec_context_may_touch_console(const ExecContext *c);
 bool exec_context_maintains_privileges(const ExecContext *c);
+bool exec_context_has_address_families(const ExecContext *c);
+bool exec_context_has_syscall_filters(const ExecContext *c);
+bool exec_context_has_syscall_logs(const ExecContext *c);
+bool exec_context_has_seccomp(const ExecContext *c);
 
 int exec_context_get_effective_ioprio(const ExecContext *c);
 bool exec_context_get_effective_mount_apivfs(const ExecContext *c);

@@ -1336,46 +1336,6 @@ static void rename_process_from_path(const char *path) {
         (void) rename_process(process_name);
 }
 
-static bool context_has_address_families(const ExecContext *c) {
-        assert(c);
-
-        return c->address_families_allow_list ||
-                !set_isempty(c->address_families);
-}
-
-static bool context_has_syscall_filters(const ExecContext *c) {
-        assert(c);
-
-        return c->syscall_allow_list ||
-                !hashmap_isempty(c->syscall_filter);
-}
-
-static bool context_has_syscall_logs(const ExecContext *c) {
-        assert(c);
-
-        return c->syscall_log_allow_list ||
-                !hashmap_isempty(c->syscall_log);
-}
-
-static bool context_has_seccomp(const ExecContext *c) {
-        /* We need NNP if we have any form of seccomp and are unprivileged */
-        return c->lock_personality ||
-                c->memory_deny_write_execute ||
-                c->private_devices ||
-                c->protect_clock ||
-                c->protect_hostname ||
-                c->protect_kernel_tunables ||
-                c->protect_kernel_modules ||
-                c->protect_kernel_logs ||
-                context_has_address_families(c) ||
-                exec_context_restrict_namespaces_set(c) ||
-                c->restrict_realtime ||
-                c->restrict_suid_sgid ||
-                !set_isempty(c->syscall_archs) ||
-                context_has_syscall_filters(c) ||
-                context_has_syscall_logs(c);
-}
-
 static bool context_has_no_new_privileges(const ExecContext *c) {
         assert(c);
 
@@ -1385,7 +1345,8 @@ static bool context_has_no_new_privileges(const ExecContext *c) {
         if (have_effective_cap(CAP_SYS_ADMIN) > 0) /* if we are privileged, we don't need NNP */
                 return false;
 
-        return context_has_seccomp(c);
+        /* We need NNP if we have any form of seccomp and are unprivileged */
+        return exec_context_has_seccomp(c);
 }
 
 #if HAVE_SECCOMP
@@ -1435,7 +1396,7 @@ static int apply_syscall_filter(const ExecContext *c, const ExecParameters *p, b
         assert(c);
         assert(p);
 
-        if (!context_has_syscall_filters(c))
+        if (!exec_context_has_syscall_filters(c))
                 return 0;
 
         if (skip_seccomp_unavailable(c, p, "SystemCallFilter="))
@@ -1468,7 +1429,7 @@ static int apply_syscall_log(const ExecContext *c, const ExecParameters *p) {
         assert(c);
         assert(p);
 
-        if (!context_has_syscall_logs(c))
+        if (!exec_context_has_syscall_logs(c))
                 return 0;
 
 #ifdef SCMP_ACT_LOG
@@ -1510,7 +1471,7 @@ static int apply_address_families(const ExecContext *c, const ExecParameters *p)
         assert(c);
         assert(p);
 
-        if (!context_has_address_families(c))
+        if (!exec_context_has_address_families(c))
                 return 0;
 
         if (skip_seccomp_unavailable(c, p, "RestrictAddressFamilies="))
@@ -4815,7 +4776,7 @@ int exec_invoke(
                  * keep the needed privileges to apply it even if we're not root. */
                 if (needs_setuid &&
                     uid_is_valid(uid) &&
-                    context_has_seccomp(context) &&
+                    exec_context_has_seccomp(context) &&
                     seccomp_allows_drop_privileges(context)) {
                         keep_seccomp_privileges = true;
 
