@@ -1339,6 +1339,8 @@ static void rename_process_from_path(const char *path) {
 static bool context_has_no_new_privileges(const ExecContext *c) {
         assert(c);
 
+        /* This is different from exec_context_ ... */
+
         if (c->no_new_privileges)
                 return true;
 

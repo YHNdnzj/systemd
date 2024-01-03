@@ -1450,6 +1450,20 @@ bool exec_context_has_seccomp(const ExecContext *c) {
                 exec_context_has_syscall_logs(c);
 }
 
+bool exec_context_get_effective_no_new_privileges(const ExecContext *c) {
+        assert(c);
+
+        if (c->no_new_privileges)
+                return true;
+
+        if (FLAGS_SET(capability_ambient_set, UINT64_C(1) << CAP_SYS_ADMIN))
+        // if (have_effective_cap(CAP_SYS_ADMIN) > 0) if we are privileged, we don't need NNP
+                return false;
+
+        /* We need NNP if we have any form of seccomp and are unprivileged */
+        return exec_context_has_seccomp(c);
+}
+
 int exec_context_get_effective_ioprio(const ExecContext *c) {
         int p;
 
