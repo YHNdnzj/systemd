@@ -407,6 +407,7 @@ struct Manager {
         bool service_watchdogs;
 
         UnitDefaults defaults;
+        bool no_new_privileges_system_wide; /* Whether NoNewPrivileges= is enabled in system.conf */
 
         int original_log_level;
         LogTarget original_log_target;

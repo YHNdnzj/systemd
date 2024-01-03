@@ -786,6 +786,8 @@ static void set_manager_defaults(Manager *m) {
         if (r < 0)
                 log_warning_errno(r, "Failed to set manager defaults, ignoring: %m");
 
+        m->no_new_privileges_system_wide = arg_no_new_privs;
+
         r = manager_default_environment(m);
         if (r < 0)
                 log_warning_errno(r, "Failed to set manager default environment, ignoring: %m");
