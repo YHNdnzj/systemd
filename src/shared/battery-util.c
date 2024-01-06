@@ -7,8 +7,6 @@
 #include "string-util.h"
 #include "battery-util.h"
 
-#define BATTERY_LOW_CAPACITY_LEVEL 5
-
 static int device_is_power_sink(sd_device *device) {
         _cleanup_(sd_device_enumerator_unrefp) sd_device_enumerator *e = NULL;
         bool found_source = false, found_sink = false;
@@ -229,11 +227,15 @@ int battery_read_capacity_percentage(sd_device *dev) {
         return battery_capacity;
 }
 
-/* If a battery whose percentage capacity is <= 5% exists, and we're not on AC power, return success */
-int battery_is_discharging_and_low(void) {
+/* If a battery whose percentage capacity is <= percent exists, and we're not on AC power, return success */
+int battery_is_discharging_and_low_full(unsigned percent) {
         _cleanup_(sd_device_enumerator_unrefp) sd_device_enumerator *e = NULL;
         bool unsure = false, found_low = false;
         int r;
+
+        assert(percent > 0);
+        assert(percent >= BATTERY_LOW_CAPACITY_LEVEL_MIN);
+        assert(percent < 100);
 
          /* We have not used battery capacity_level since value is set to full
          * or Normal in case ACPI is not working properly. In case of no battery
@@ -258,17 +260,17 @@ int battery_is_discharging_and_low(void) {
                         continue;
                 }
 
-                if (level > BATTERY_LOW_CAPACITY_LEVEL) { /* Found a charged battery */
+                if (level > percent) { /* Found a charged battery */
                         log_device_full(dev,
                                         found_low ? LOG_INFO : LOG_DEBUG,
                                         "Found battery with capacity above threshold (%d%% > %d%%).",
-                                        level, BATTERY_LOW_CAPACITY_LEVEL);
+                                        level, percent);
                         return false;
                 }
 
                 log_device_info(dev,
                                 "Found battery with capacity below threshold (%d%% <= %d%%).",
-                                level, BATTERY_LOW_CAPACITY_LEVEL);
+                                level, percent);
                 found_low = true;
         }
 
