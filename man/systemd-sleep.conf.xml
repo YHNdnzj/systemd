@@ -87,7 +87,7 @@
 
         <listitem>
           <para>A low power state where the system is initially suspended (the state is stored in RAM).
-          When the battery level is too low (less than 5%) or a certain timespan has passed, whichever
+          When the battery level is too low (see below) or a certain timespan has passed, whichever
           happens first, the system is automatically woken up and then hibernated. This establishes a balance
           between speed and safety.</para>
 
@@ -99,7 +99,8 @@
           If not available, or <varname>HibernateDelaySec=</varname> is set, the system would regularly wake
           up to check the time and detect the battery percentage/discharging rate. The rate is used to
           schedule the next detection. If that is also not available, <varname>SuspendEstimationSec=</varname>
-          is used as last resort.</para>
+          is used as last resort, which defaults to <literal>1h</literal>. For details of the battery level
+          which shall be considered low, refer to <varname>BatteryLowLevel=</varname>.</para>
 
           <xi:include href="version-info.xml" xpointer="v239"/>
         </listitem>
@@ -214,8 +215,28 @@
           <para>The RTC alarm will wake the system after the specified timespan to measure the system battery
           capacity level and estimate battery discharging rate. Only used by
           <citerefentry><refentrytitle>systemd-suspend-then-hibernate.service</refentrytitle><manvolnum>8</manvolnum></citerefentry>.
+<<<<<<< HEAD
           Refer to <command>suspend-then-hibernate</command> for details on how this option interacts with
           other options/system battery state.</para>
+||||||| parent of 936a5de752 (man/systemd-sleep.conf: document the operation of s2h more thoroughly)
+          Defaults to 1h.</para>
+=======
+          Refer to <command>suspend-then-hibernate</command> for details on how this option interacts with
+          other options/system battery state.</para>
+
+          <xi:include href="version-info.xml" xpointer="v253"/></listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><varname>BatteryLowLevel=</varname></term>
+
+        <listitem>
+          <para>Takes a percentage >= 5. When reached, the battery capacity is considered low, and the system
+          would be hibernated. Defaults to 5. Only used by
+          <citerefentry><refentrytitle>systemd-suspend-then-hibernate.service</refentrytitle><manvolnum>8</manvolnum></citerefentry>.
+          Refer to <command>suspend-then-hibernate</command> for details on how this option interacts with
+          other options/system battery state.</para>
+>>>>>>> 936a5de752 (man/systemd-sleep.conf: document the operation of s2h more thoroughly)
 
           <xi:include href="version-info.xml" xpointer="v253"/></listitem>
       </varlistentry>
