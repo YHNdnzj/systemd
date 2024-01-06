@@ -32,6 +32,7 @@ typedef struct SleepConfig {
 
         usec_t hibernate_delay_usec;
         usec_t suspend_estimation_usec;
+        unsigned battery_low_level;
 } SleepConfig;
 
 SleepConfig* sleep_config_free(SleepConfig *sc);

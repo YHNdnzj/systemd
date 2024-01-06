@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include "alloc-util.h"
+#include "battery-util.h"
 #include "conf-parser.h"
 #include "constants.h"
 #include "device-util.h"
@@ -123,6 +124,7 @@ int parse_sleep_config(SleepConfig **ret) {
 
         *sc = (SleepConfig) {
                 .hibernate_delay_usec = USEC_INFINITY,
+                .battery_low_level = BATTERY_LOW_CAPACITY_LEVEL_MIN,
         };
 
         const ConfigTableItem items[] = {
@@ -142,6 +144,7 @@ int parse_sleep_config(SleepConfig **ret) {
 
                 { "Sleep", "HibernateDelaySec",         config_parse_sec,         0,               &sc->hibernate_delay_usec    },
                 { "Sleep", "SuspendEstimationSec",      config_parse_sec,         0,               &sc->suspend_estimation_usec },
+                { "Sleep", "BatteryLowLevel",           config_parse_unsigned,    0,               &sc->battery_low_level       },
                 {}
         };
 
@@ -173,6 +176,12 @@ int parse_sleep_config(SleepConfig **ret) {
 
         if (sc->suspend_estimation_usec == 0)
                 sc->suspend_estimation_usec = DEFAULT_SUSPEND_ESTIMATION_USEC;
+
+        if (sc->battery_low_level < BATTERY_LOW_CAPACITY_LEVEL_MIN || sc->battery_low_level >= 100) {
+                log_warning("BatteryLowLevel=%u out of range, using minimum (%u) instead.",
+                            sc->battery_low_level, BATTERY_LOW_CAPACITY_LEVEL_MIN);
+                sc->battery_low_level = BATTERY_LOW_CAPACITY_LEVEL_MIN;
+        }
 
         sleep_config_validate_state_and_mode(sc);
 
