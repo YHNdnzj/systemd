@@ -210,9 +210,12 @@ int config_parse_net_condition(
         if (negate)
                 rvalue++;
 
-        c = condition_new(cond, rvalue, false, negate);
+        c = condition_new(cond, rvalue, /* flags = */ 0);
         if (!c)
                 return log_oom();
+
+        if (negate)
+                c->flags |= CONDITION_NEGATE;
 
         /* Drop previous assignment. */
         *list = condition_free_list_type(*list, cond);

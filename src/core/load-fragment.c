@@ -3033,11 +3033,11 @@ int config_parse_unit_condition_path(
                 void *data,
                 void *userdata) {
 
-        _cleanup_free_ char *p = NULL;
         Condition **list = ASSERT_PTR(data), *c;
+        const Unit *u = ASSERT_PTR(userdata);
         ConditionType t = ltype;
-        bool trigger, negate;
-        const Unit *u = userdata;
+        _cleanup_free_ char *p = NULL;
+        bool early, trigger, negate;
         int r;
 
         assert(filename);
@@ -3049,6 +3049,8 @@ int config_parse_unit_condition_path(
                 *list = condition_free_list(*list);
                 return 0;
         }
+
+        early = rvalue[0] == '+';
 
         trigger = rvalue[0] == '|';
         if (trigger)

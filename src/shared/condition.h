@@ -59,21 +59,35 @@ typedef enum ConditionResult {
         _CONDITION_RESULT_INVALID = -EINVAL,
 } ConditionResult;
 
+typedef enum ConditionFlags {
+        CONDITION_TRIGGER = 1 << 0,
+        CONDITION_NEGATE  = 1 << 1,
+        CONDITION_EARLY   = 1 << 2,
+} ConditionFlags;
+
+ConditionFlags condition_parse_flags(const char *s, const char **ret_parameter);
+
+#define condition_flags_to_string(flags)                                \
+        ({                                                              \
+                ConditionFlags _flags_ = flags;                         \
+                strjoina(_flags_ & CONDITION_EARLY   ? "+" : "",        \
+                         _flags_ & CONDITION_TRIGGER ? "|" : "",        \
+                         _flags_ & CONDITION_NEGATE  ? "!" : "");       \
+        })
+
 typedef struct Condition {
         ConditionType type;
 
-        bool trigger;
-        bool negate;
-        bool early;
+        ConditionFlags flags;
+        char *parameter;
 
         ConditionResult result;
-
-        char *parameter;
 
         LIST_FIELDS(struct Condition, conditions);
 } Condition;
 
-Condition* condition_new(ConditionType type, const char *parameter, bool trigger, bool negate);
+Condition* condition_new(ConditionType type, const char *parameter, ConditionFlags flags);
+Condition* condition_new_parse_flags(ConditionType type, const char *s);
 Condition* condition_free(Condition *c);
 Condition* condition_free_list_type(Condition *first, ConditionType type);
 static inline Condition* condition_free_list(Condition *first) {
@@ -81,6 +95,10 @@ static inline Condition* condition_free_list(Condition *first) {
 }
 
 int condition_test(Condition *c, char **env);
+
+static inline bool CONDITION_IS_TRIGGER(const Condition *c) {
+        return FLAGS_SET(ASSERT_PTR(c)->flags, CONDITION_TRIGGER);
+}
 
 typedef int (*condition_test_logger_t)(void *userdata, int level, int error, const char *file, int line, const char *func, const char *format, ...) _printf_(7, 8);
 typedef const char* (*condition_to_string_t)(ConditionType t) _const_;

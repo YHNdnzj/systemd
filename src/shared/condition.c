@@ -63,8 +63,37 @@
 #include "user-util.h"
 #include "virt.h"
 
-Condition* condition_new(ConditionType type, const char *parameter, bool trigger, bool negate) {
-        Condition *c;
+ConditionFlags condition_parse_flags(const char *s, const char **ret_parameter) {
+        ConditionFlags flags = 0;
+        const char *param;
+
+        assert(s);
+        assert(ret_flags);
+
+        param = s;
+
+        if (*param == '+') {
+                flags |= CONDITION_EARLY;
+                param += 1 + strspn(param + 1, WHITESPACE);
+        }
+
+        if (*param == '|') {
+                flags |= CONDITION_TRIGGER;
+                param += 1 + strspn(param + 1, WHITESPACE);
+        }
+
+        if (*param == '!') {
+                flags |= CONDITION_NEGATE;
+                param += 1 + strspn(param + 1, WHITESPACE);
+        }
+
+        *ret_flags = flags;
+        if (ret_parameter)
+                *ret_parameter = param;
+}
+
+Condition* condition_new(ConditionType type, const char *parameter, ConditionFlags flags) {
+        _cleanup_free_ Condition *c = NULL;
 
         assert(type >= 0);
         assert(type < _CONDITION_TYPE_MAX);
@@ -76,18 +105,19 @@ Condition* condition_new(ConditionType type, const char *parameter, bool trigger
 
         *c = (Condition) {
                 .type = type,
-                .trigger = trigger,
-                .negate = negate,
+                .flags = flags,
         };
 
         if (parameter) {
                 c->parameter = strdup(parameter);
                 if (!c->parameter)
-                        return mfree(c);
+                        return NULL;
         }
 
-        return c;
+        return TAKE_PTR(c);
 }
+
+Condition* condition_p
 
 Condition* condition_free(Condition *c) {
         assert(c);
@@ -1198,7 +1228,7 @@ int condition_test(Condition *c, char **env) {
                 return r;
         }
 
-        b = (r > 0) == !c->negate;
+        b = (r > 0) == !FLAGS_SET(c->flags, CONDITION_NEGATE);
         c->result = b ? CONDITION_SUCCEEDED : CONDITION_FAILED;
         return b;
 }
@@ -1227,17 +1257,15 @@ bool condition_test_list(
                 if (logger) {
                         if (r < 0)
                                 logger(userdata, LOG_WARNING, r, PROJECT_FILE, __LINE__, __func__,
-                                       "Couldn't determine result for %s=%s%s%s, assuming failed: %m",
+                                       "Couldn't determine result for %s=%s%s, assuming failed: %m",
                                        to_string(c->type),
-                                       c->trigger ? "|" : "",
-                                       c->negate ? "!" : "",
+                                       condition_flags_to_string(c->flags),
                                        c->parameter);
                         else
                                 logger(userdata, LOG_DEBUG, 0, PROJECT_FILE, __LINE__, __func__,
-                                       "%s=%s%s%s %s.",
+                                       "%s=%s%s %s.",
                                        to_string(c->type),
-                                       c->trigger ? "|" : "",
-                                       c->negate ? "!" : "",
+                                       condition_flags_to_string(c->flags),
                                        c->parameter,
                                        condition_result_to_string(c->result));
                 }
