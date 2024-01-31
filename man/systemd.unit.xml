@@ -1256,13 +1256,11 @@
       specified conditions and asserts are true. If not, the starting of the unit will be (mostly silently)
       skipped (in case of conditions), or aborted with an error message (in case of asserts). Failing
       conditions or asserts will not result in the unit being moved into the <literal>failed</literal>
-      state. The conditions and asserts are checked at the time the queued start job is to be executed. The
-      ordering dependencies are still respected, so other units are still pulled in and ordered as if this
-      unit was successfully activated, and the conditions and asserts are executed the precise moment the
-      unit would normally start and thus can validate system state after the units ordered before completed
+      state. The ordering dependencies are still respected, so other units are still pulled in and ordered
+      as if this unit was successfully activated, and the conditions and asserts are executed the precise moment
+      the unit would normally start and thus can validate system state after the units ordered before completed
       initialization. Use condition expressions for skipping units that do not apply to the local system, for
-      example because the kernel or runtime environment doesn't require their functionality.
-      </para>
+      example because the kernel or runtime environment doesn't require their functionality.</para>
 
       <para>If multiple conditions are specified, the unit will be executed if all of them apply (i.e. a
       logical AND is applied). Condition checks can use a pipe symbol (<literal>|</literal>) after the equals
@@ -1274,16 +1272,21 @@
       options is assigned the empty string, the list of conditions is reset completely, all previous
       condition settings (of any kind) will have no effect.</para>
 
-      <para>The <varname>AssertArchitecture=</varname>, <varname>AssertVirtualization=</varname>, … options
-      are similar to conditions but cause the start job to fail (instead of being skipped). The failed check
-      is logged. Units with unmet conditions are considered to be in a clean state and will be garbage
-      collected if they are not referenced. This means that when queried, the condition failure may or may
-      not show up in the state of the unit.</para>
+      <para>The conditions and asserts, if not prefixed with <literal>+</literal>, are checked at the time
+      the queued start job is to be executed. In other words, dependency jobs of the job whose conditions
+      will be checked are unconditionally executed. E.g. a mount unit has automatic dependencies (of type
+      <option>Requires=</option> and <option>After=</option>) on its backing device, and thus the device
+      is always waited for even if the mount unit has unmet conditions and will eventually be skipped.
+      To check for conditions at job enqueuing time so that the whole dependency chain can be skipped,
+      prefix the argument with <literal>+</literal>.</para>
 
-      <para>Note that neither assertion nor condition expressions result in unit state changes. Also note
-      that both are checked at the time the job is to be executed, i.e. long after depending jobs and it
-      itself were queued. Thus, neither condition nor assertion expressions are suitable for conditionalizing
-      unit dependencies.</para>
+      <para>The <varname>AssertArchitecture=</varname>, <varname>AssertVirtualization=</varname>, … options
+      are similar to conditions but cause the start job to fail (instead of being skipped).</para>
+
+      <para>The failed condition and assertion checks are logged. However, do note that units with unmet
+      conditions are considered to be in a clean state and will be garbage collected if they are not referenced.
+      This means that when queried using e.g. <command>systemctl status</command>, the unit state may or may not
+      be <literal>condition unmet</literal>.</para>
 
       <para>The <command>condition</command> verb of
       <citerefentry><refentrytitle>systemd-analyze</refentrytitle><manvolnum>1</manvolnum></citerefentry> can

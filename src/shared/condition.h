@@ -60,12 +60,13 @@ typedef enum ConditionResult {
 } ConditionResult;
 
 typedef struct Condition {
-        ConditionType type:8;
+        ConditionType type;
 
-        bool trigger:1;
-        bool negate:1;
+        bool trigger;
+        bool negate;
+        bool early;
 
-        ConditionResult result:6;
+        ConditionResult result;
 
         char *parameter;
 
