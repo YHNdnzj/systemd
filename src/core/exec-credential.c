@@ -787,7 +787,6 @@ static int setup_credentials_internal(
                 uid_t uid,
                 gid_t gid) {
 
-        bool final_mounted;
         int r, workspace_mounted; /* negative if we don't know yet whether we have/can mount something; true
                                    * if we mounted something; false if we definitely can't mount anything */
 
@@ -800,24 +799,14 @@ static int setup_credentials_internal(
         r = path_is_mount_point(final);
         if (r < 0)
                 return r;
-        final_mounted = r > 0;
-
-        if (final_mounted) {
+        if (r > 0) {
                 if (FLAGS_SET(params->flags, EXEC_SETUP_CREDENTIALS_FRESH)) {
                         r = umount_verbose(LOG_DEBUG, final, MNT_DETACH|UMOUNT_NOFOLLOW);
                         if (r < 0)
                                 return r;
-
-                        final_mounted = false;
                 } else {
-                        /* We can reuse the previous credential dir */
-                        r = dir_is_empty(final, /* ignore_hidden_or_backup = */ false);
-                        if (r < 0)
-                                return r;
-                        if (r == 0) {
-                                log_debug("Credential dir for unit '%s' already set up, skipping.", unit);
-                                return 0;
-                        }
+                        log_debug("Credential dir for unit '%s' already set up, skipping.", unit);
+                        return 0;
                 }
         }
 
@@ -833,19 +822,12 @@ static int setup_credentials_internal(
         } else
                 workspace_mounted = -1; /* ditto */
 
-        /* If both the final place and the workspace are mounted, we have no mounts to set up, based on
-         * the assumption that they're actually the same tmpfs (but the latter with MS_RDONLY different).
-         * If the workspace is not mounted, we just bind the final place over and make it writable. */
-        must_mount = must_mount || final_mounted;
-
         if (workspace_mounted < 0) {
-                if (!final_mounted)
-                        /* Nothing is mounted on the workspace yet, let's try to mount a new tmpfs if
-                         * not using the final place. */
-                        r = mount_credentials_fs(workspace, CREDENTIALS_TOTAL_SIZE_MAX, /* ro= */ false);
-                if (final_mounted || r < 0) {
-                        /* If using final place or failed to mount new tmpfs, make a bind mount from
-                         * the final to the workspace, so that we can make it writable there. */
+                /* Nothing is mounted on the workspace yet, let's try to mount a new tmpfs. */
+                r = mount_credentials_fs(workspace, CREDENTIALS_TOTAL_SIZE_MAX, /* ro= */ false);
+                if (r < 0) {
+                        /* If failed, make a bind mount from the final to the workspace, so that we can
+                         * make it writable there and use it as workspace. */
                         r = mount_nofollow_verbose(LOG_DEBUG, final, workspace, NULL, MS_BIND|MS_REC, NULL);
                         if (r < 0) {
                                 if (!ERRNO_IS_PRIVILEGE(r))
@@ -858,9 +840,7 @@ static int setup_credentials_internal(
                                         return r;
 
                                 /* If we lack privileges to bind mount stuff, then let's gracefully proceed
-                                 * for compat with container envs, and just use the final dir as is.
-                                 * Final place must not be mounted in this case (refused by must_mount
-                                 * above) */
+                                 * for compat with container envs, and just use the final dir as is. */
 
                                 workspace_mounted = false;
                         } else {
@@ -888,38 +868,27 @@ static int setup_credentials_internal(
         (void) label_fix_full(AT_FDCWD, where, final, 0);
 
         r = acquire_credentials(context, params, unit, where, uid, gid, workspace_mounted);
-        if (r < 0) {
-                /* If we're using final place as workspace, and failed to acquire credentials, we might
-                 * have left half-written creds there. Let's get rid of the whole mount, so future
-                 * calls won't reuse it. */
-                if (final_mounted)
-                        (void) umount_verbose(LOG_DEBUG, final, MNT_DETACH|UMOUNT_NOFOLLOW);
-
+        if (r < 0)
                 return r;
-        }
 
         if (workspace_mounted) {
-                if (!final_mounted) {
-                        r = dir_is_empty(where, /* ignore_hidden_or_backup = */ false);
-                        if (r < 0)
-                                log_debug_errno(r, "Failed to check if credential dir is empty, ignoring: %m");
-                        if (r > 0) {
-                                log_debug("No credentials acquired for unit '%s', skipping credential dir installation.",
-                                          unit);
-                                return 0;
-                        }
+                r = dir_is_empty(where, /* ignore_hidden_or_backup = */ false);
+                if (r < 0)
+                        log_debug_errno(r, "Failed to check if credential dir is empty, ignoring: %m");
+                if (r > 0) {
+                        log_debug("No credentials acquired for unit '%s', skipping credential dir installation.",
+                                  unit);
+                        return 0;
+                }
 
-                        /* Make workspace read-only now, so that any bind mount we make from it defaults to
-                         * read-only too */
-                        r = mount_nofollow_verbose(LOG_DEBUG, NULL, workspace, NULL, MS_BIND|MS_REMOUNT|credentials_fs_mount_flags(/* ro= */ true), NULL);
-                        if (r < 0)
-                                return r;
+                /* Make workspace read-only now, so that any bind mount we make from it defaults to
+                 * read-only too */
+                r = mount_nofollow_verbose(LOG_DEBUG, NULL, workspace, NULL, MS_BIND|MS_REMOUNT|credentials_fs_mount_flags(/* ro= */ true), NULL);
+                if (r < 0)
+                        return r;
 
-                        /* And mount it to the final place, read-only */
-                        r = mount_nofollow_verbose(LOG_DEBUG, workspace, final, NULL, MS_MOVE, NULL);
-                } else
-                        /* Otherwise we just get rid of the bind mount of final place */
-                        r = umount_verbose(LOG_DEBUG, workspace, MNT_DETACH|UMOUNT_NOFOLLOW);
+                /* And mount it to the final place, read-only */
+                r = mount_nofollow_verbose(LOG_DEBUG, workspace, final, NULL, MS_MOVE, NULL);
                 if (r < 0)
                         return r;
         } else {
@@ -931,6 +900,7 @@ static int setup_credentials_internal(
                 r = path_extract_directory(final, &parent);
                 if (r < 0)
                         return r;
+
                 if (chmod(parent, 0755) < 0)
                         return -errno;
         }
