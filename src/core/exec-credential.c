@@ -900,6 +900,15 @@ static int setup_credentials_internal(
 
         if (workspace_mounted) {
                 if (!final_mounted) {
+                        r = dir_is_empty(where, /* ignore_hidden_or_backup = */ false);
+                        if (r < 0)
+                                log_debug_errno(r, "Failed to check if credential dir is empty, ignoring: %m");
+                        if (r > 0) {
+                                log_debug("No credentials acquired for unit '%s', skipping credential dir installation.",
+                                          unit);
+                                return 0;
+                        }
+
                         /* Make workspace read-only now, so that any bind mount we make from it defaults to
                          * read-only too */
                         r = mount_nofollow_verbose(LOG_DEBUG, NULL, workspace, NULL, MS_BIND|MS_REMOUNT|credentials_fs_mount_flags(/* ro= */ true), NULL);
