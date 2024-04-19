@@ -98,11 +98,10 @@ static int match_disconnected(sd_bus_message *m, void *userdata, sd_bus_error *e
         BusWaitForUnits *d = ASSERT_PTR(userdata);
 
         assert(m);
+        assert(sd_bus_message_get_bus(m) == d->bus);
 
         log_warning("D-Bus connection terminated while waiting for unit.");
-
-        bus_wait_for_units_clear(d);
-        sd_bus_close(sd_bus_message_get_bus(m));
+        d->bus = sd_bus_close_unref(d->bus);
 
         return 0;
 }
