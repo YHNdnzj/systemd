@@ -18,11 +18,24 @@ typedef enum BusWaitForUnitsFlags {
         BUS_WAIT_FOR_MAINTENANCE_END = 1 << 0, /* Wait until the unit is no longer in maintenance state */
         BUS_WAIT_FOR_INACTIVE        = 1 << 1, /* Wait until the unit is back in inactive or dead state */
         BUS_WAIT_NO_JOB              = 1 << 2, /* Wait until there's no more job pending */
+        BUS_WAIT_NO_RESTART          = 1 << 4  /* Wait until a service won't restart anymore */
         BUS_WAIT_REFFED              = 1 << 3, /* The unit is already reffed with RefUnit() */
-        _BUS_WAIT_FOR_TARGET         = BUS_WAIT_FOR_MAINTENANCE_END|BUS_WAIT_FOR_INACTIVE|BUS_WAIT_NO_JOB,
+        _BUS_WAIT_FOR_TARGET         = BUS_WAIT_FOR_MAINTENANCE_END|BUS_WAIT_FOR_INACTIVE|BUS_WAIT_NO_JOB|BUS_WAIT_NO_RESTART,
 } BusWaitForUnitsFlags;
 
-typedef void (*bus_wait_for_units_unit_callback_t)(BusWaitForUnits *d, const char *unit_path, bool good, void *userdata);
+typedef struct BusWaitForUnitMetadata {
+        UnitType type;
+        char *bus_path;
+
+        char *active_state;
+        char *sub_state;
+
+        char *clean_result;
+
+        uint32_t job_id;
+}
+
+typedef void (*bus_wait_for_units_unit_callback_t)(const BusWaitForUnitMetadata *metadata, bool end, void *userdata);
 
 int bus_wait_for_units_new(sd_bus *bus, BusWaitForUnits **ret);
 
