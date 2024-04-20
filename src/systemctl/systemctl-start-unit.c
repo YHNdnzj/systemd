@@ -55,6 +55,47 @@ static const char* verb_to_job_type(const char *verb) {
         return "start";
 }
 
+static void wait_for_unit_log_callback(const BusWaitForUnitMetadata *metadata, bool end, void *userdata) {
+
+        static const struct {
+                char *state;
+                char *message;
+                int log_level;
+        } service_state_msgs[] = {
+                { "dead",                       "deactivated",  LOG_INFO},
+                { "failed",                       "failed", LOG_ERR  },
+                { "dead-before-auto-restart",   "deactivated, waiting for restart", LOG_NOTICE },
+                { "failed-before-auto-restart", "failed, waiting for restart", LOG_WARNING },
+                { "auto-restart-queued",        "restarting", LOG_INFO },
+        }, unit_state_msgs[] = {
+                { "inactive",                   "deactivated", LOG_INFO},
+                { "failed",                     "failed",       LOG_ERR},
+        };
+
+        assert(metadata || end);
+
+        if (!metadata)
+                return;
+
+        if (arg_quiet)
+                return;
+
+        if (metadata->type == UNIT_SERVICE) {
+                if (!metadata->sub_state)
+                        return;
+
+                FOREACH_ARRAY(m, service_state_msgs, ELEMENTSOF(service_state_msgs))
+                        if (streq(metadata->sub_state, m->state))
+                                log_full(m->log_level, "%s: %s", unit_id, m->message);
+        } else if (end) {
+                assert(metadata->active_state);
+
+                FOREACH_ARRAY(m, unit_state_msgs, ELEMENTSOF(unit_state_msgs))
+                        if (streq(metadata->active_state, m->state))
+                                log_full(m->log_level, "%s: %s", unit_id, m->message);
+        }
+}
+
 static int start_unit_one(
                 sd_bus *bus,
                 const char *method,    /* When using classic per-job bus methods */
@@ -154,7 +195,10 @@ static int start_unit_one(
         }
 
         if (wu) {
-                r = bus_wait_for_units_add_unit(wu, name, BUS_WAIT_FOR_INACTIVE|BUS_WAIT_NO_JOB, NULL, NULL);
+                r = bus_wait_for_units_add_unit(wu,
+                                                name,
+                                                BUS_WAIT_FOR_INACTIVE|BUS_WAIT_NO_JOB, // TODO: hook NO_RESTART
+                                                wait_for_unit_log_callback, /* userdata = */ NULL);
                 if (r < 0)
                         return log_error_errno(r, "Failed to watch unit %s: %m", name);
         }
