@@ -2747,10 +2747,10 @@ static int method_add_dependency_unit_files(sd_bus_message *message, void *userd
 }
 
 static int method_get_unit_file_links(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         Manager *m = ASSERT_PTR(userdata);
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         InstallChange *changes = NULL;
-        size_t n_changes = 0, i;
+        size_t n_changes = 0;
         const char *name;
         int runtime, r;
 
@@ -2774,9 +2774,9 @@ static int method_get_unit_file_links(sd_bus_message *message, void *userdata, s
         if (r < 0)
                 return log_error_errno(r, "Failed to get file links for %s: %m", name);
 
-        for (i = 0; i < n_changes; i++)
-                if (changes[i].type == INSTALL_CHANGE_UNLINK) {
-                        r = sd_bus_message_append(reply, "s", changes[i].path);
+        FOREACH_ARRAY(i, changes, n_changes)
+                if (i->type == INSTALL_CHANGE_UNLINK) {
+                        r = sd_bus_message_append(reply, "s", i->path);
                         if (r < 0)
                                 return r;
                 }
