@@ -67,15 +67,12 @@ int bus_job_method_cancel(sd_bus_message *message, void *userdata, sd_bus_error 
 }
 
 int bus_job_method_get_waiting_jobs(sd_bus_message *message, void *userdata, sd_bus_error *error) {
+        Job *j = ASSERT_PTR(userdata);
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         _cleanup_free_ Job **list = NULL;
-        Job *j = userdata;
         int r, n;
 
-        if (strstr(sd_bus_message_get_member(message), "After"))
-                n = job_get_after(j, &list);
-        else
-                n = job_get_before(j, &list);
+        n = job_get_waiting(j, strstr(sd_bus_message_get_member(message), "After"), &list);
         if (n < 0)
                 return n;
 

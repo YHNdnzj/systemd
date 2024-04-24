@@ -1522,12 +1522,12 @@ static size_t sort_job_list(Job **list, size_t n) {
         return b;
 }
 
-int job_get_before(Job *j, Job*** ret) {
-        _cleanup_free_ Job** list = NULL;
-        Unit *other = NULL;
+int job_get_waiting(Job *j, bool after, Job ***ret) {
+        _cleanup_free_ Job **list = NULL;
         size_t n = 0;
 
-        /* Returns a list of all pending jobs that need to finish before this job may be started. */
+        /* When 'after', returns a list of all pending jobs that need to run after job 'j' finishes.
+         * Otherwise, a list of pending jobs that must finish before this job may be started. */
 
         assert(j);
         assert(ret);
@@ -1537,73 +1537,22 @@ int job_get_before(Job *j, Job*** ret) {
                 return 0;
         }
 
-        UNIT_FOREACH_DEPENDENCY(other, j->unit, UNIT_ATOM_AFTER) {
-                if (!other->job)
-                        continue;
-                if (job_compare(j, other->job, UNIT_ATOM_AFTER) <= 0)
-                        continue;
+        UnitDependencyAtom atom;
+        FOREACH_ARGUMENT(atom, UNIT_ATOM_AFTER, UNIT_ATOM_BEFORE) {
+                Unit *other;
+                UNIT_FOREACH_DEPENDENCY(other, j->unit, atom) {
+                        if (!other->job)
+                                continue;
 
-                if (!GREEDY_REALLOC(list, n+1))
-                        return -ENOMEM;
-                list[n++] = other->job;
-        }
+                        /* job_compare() checks for 'ignore_order' internally */
+                        int order = job_compare(j, other->job, atom);
+                        if (order == 0 || ((order < 0) != after))
+                                continue;
 
-        UNIT_FOREACH_DEPENDENCY(other, j->unit, UNIT_ATOM_BEFORE) {
-                if (!other->job)
-                        continue;
-                if (job_compare(j, other->job, UNIT_ATOM_BEFORE) <= 0)
-                        continue;
-
-                if (!GREEDY_REALLOC(list, n+1))
-                        return -ENOMEM;
-                list[n++] = other->job;
-        }
-
-        n = sort_job_list(list, n);
-
-        *ret = TAKE_PTR(list);
-
-        return (int) n;
-}
-
-int job_get_after(Job *j, Job*** ret) {
-        _cleanup_free_ Job** list = NULL;
-        Unit *other = NULL;
-        size_t n = 0;
-
-        assert(j);
-        assert(ret);
-
-        /* Returns a list of all pending jobs that are waiting for this job to finish. */
-
-        UNIT_FOREACH_DEPENDENCY(other, j->unit, UNIT_ATOM_BEFORE) {
-                if (!other->job)
-                        continue;
-
-                if (other->job->ignore_order)
-                        continue;
-
-                if (job_compare(j, other->job, UNIT_ATOM_BEFORE) >= 0)
-                        continue;
-
-                if (!GREEDY_REALLOC(list, n+1))
-                        return -ENOMEM;
-                list[n++] = other->job;
-        }
-
-        UNIT_FOREACH_DEPENDENCY(other, j->unit, UNIT_ATOM_AFTER) {
-                if (!other->job)
-                        continue;
-
-                if (other->job->ignore_order)
-                        continue;
-
-                if (job_compare(j, other->job, UNIT_ATOM_AFTER) >= 0)
-                        continue;
-
-                if (!GREEDY_REALLOC(list, n+1))
-                        return -ENOMEM;
-                list[n++] = other->job;
+                        if (!GREEDY_REALLOC(list, n + 1))
+                                return -ENOMEM;
+                        list[n++] = other->job;
+                }
         }
 
         n = sort_job_list(list, n);
