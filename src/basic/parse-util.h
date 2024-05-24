@@ -159,3 +159,9 @@ int store_loadavg_fixed_point(unsigned long i, unsigned long f, loadavg_t *ret);
 int parse_loadavg_fixed_point(const char *s, loadavg_t *ret);
 
 bool nft_identifier_valid(const char *id);
+
+int parse_machine_spec(const char *spec, char **ret_machine, char **ret_user);
+static inline int machine_spec_valid(const char *spec) {
+        int r = parse_machine_spec(spec, NULL, NULL);
+        return r >= 0 ? true : r == -EINVAL ? false : r;
+}

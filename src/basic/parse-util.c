@@ -10,6 +10,7 @@
 #include "alloc-util.h"
 #include "errno-list.h"
 #include "extract-word.h"
+#include "hostname-util.h"
 #include "locale-util.h"
 #include "macro.h"
 #include "missing_network.h"
@@ -18,6 +19,7 @@
 #include "stat-util.h"
 #include "string-util.h"
 #include "strv.h"
+#include "user-util.h"
 
 int parse_boolean(const char *v) {
         if (!v)
@@ -806,4 +808,51 @@ bool nft_identifier_valid(const char *id) {
                 if (!ascii_isalpha(id[i]) && !ascii_isdigit(id[i]) && !IN_SET(id[i], '/', '\\', '_', '.'))
                         return false;
         return true;
+}
+
+int parse_machine_spec(const char *spec, char **ret_machine, char **ret_user) {
+        _cleanup_free_ char *machine = NULL, *user = NULL;
+
+        /* If the "@" syntax is used we'll allow either the "user" or the "container" part to be omitted,
+         * but not both. */
+
+        assert(spec);
+
+        const char *h = strchr(spec, '@');
+        if (!h) /* Only machine name → caller should use default user */
+                machine = strdup(spec);
+        else if (h > spec) { /* user@[machine] */
+                user = strndup(spec, h - spec);
+                if (!user)
+                        return -ENOMEM;
+                h++;
+
+                if (!valid_user_group_name(user, VALID_USER_RELAX | VALID_USER_ALLOW_NUMERIC))
+                        return -EINVAL;
+
+                machine = strdup(isempty(h) ? ".host" : h);
+        } else { /* @machine → use the invoking user's name */
+                h++;
+
+                if (isempty(h))
+                        return -EINVAL;
+
+                user = getusername_malloc();
+                if (!user)
+                        return -ENOMEM;
+
+                machine = strdup(h);
+        }
+        if (!machine)
+                return -ENOMEM;
+
+        if (!hostname_is_valid(machine, VALID_HOSTNAME_DOT_HOST))
+                return -EINVAL;
+
+        if (ret_machine)
+                *ret_machine = TAKE_PTR(machine);
+        if (ret_user)
+                *ret_user = TAKE_PTR(user);
+
+        return 0;
 }
