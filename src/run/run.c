@@ -405,6 +405,13 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'M':
+                        r = machine_spec_valid(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to check if --machine='%s' is valid: %m", optarg);
+                        if (r == 0)
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Invalid --machine= specified: %s", optarg);
+
                         arg_transport = BUS_TRANSPORT_MACHINE;
                         arg_host = optarg;
                         break;
@@ -806,6 +813,10 @@ static int parse_argv_sudo_mode(int argc, char *argv[]) {
                         break;
 
                 case ARG_MACHINE:
+                        if (!machine_spec_valid(optarg))
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Invalid --machine= specified: %s", optarg);
+
                         arg_transport = BUS_TRANSPORT_MACHINE;
                         arg_host = optarg;
                         break;
