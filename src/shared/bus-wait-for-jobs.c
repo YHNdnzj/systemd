@@ -329,3 +329,42 @@ int bus_wait_for_jobs_one(BusWaitForJobs *d, const char *path, WaitJobsFlags fla
 
         return bus_wait_for_jobs(d, flags, extra_args);
 }
+
+int bus_ make_extra_args(const char *extra_args[static 4]) {
+
+        // TODO: https://github.com/systemd/systemd/issues/30169#issuecomment-2127982658, use for run
+        size_t n = 0;
+
+        assert(extra_args);
+
+        if (arg_runtime_scope != RUNTIME_SCOPE_SYSTEM)
+                extra_args[n++] = "--user";
+
+        switch (arg_transport) {
+
+        case BUS_TRANSPORT_REMOTE:
+                extra_args[n++] = "-H";
+                extra_args[n++] = arg_host;
+                break;
+
+        case BUS_TRANSPORT_MACHINE:
+                extra_args[n++] = "-M";
+                extra_args[n++] = arg_host;
+                break;
+
+        case BUS_TRANSPORT_CAPSULE:
+                extra_args[n++] = "-C";
+                extra_args[n++] = arg_host;
+                break;
+
+        case BUS_TRANSPORT_LOCAL:
+                break;
+
+        default:
+                assert_not_reached();
+        }
+
+        extra_args[n] = NULL;
+        return extra_args;
+}
+

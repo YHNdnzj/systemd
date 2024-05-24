@@ -254,42 +254,6 @@ enum action verb_to_action(const char *verb) {
         return _ACTION_INVALID;
 }
 
-static const char** make_extra_args(const char *extra_args[static 4]) {
-        size_t n = 0;
-
-        assert(extra_args);
-
-        if (arg_runtime_scope != RUNTIME_SCOPE_SYSTEM)
-                extra_args[n++] = "--user";
-
-        switch (arg_transport) {
-
-        case BUS_TRANSPORT_REMOTE:
-                extra_args[n++] = "-H";
-                extra_args[n++] = arg_host;
-                break;
-
-        case BUS_TRANSPORT_MACHINE:
-                extra_args[n++] = "-M";
-                extra_args[n++] = arg_host;
-                break;
-
-        case BUS_TRANSPORT_CAPSULE:
-                extra_args[n++] = "-C";
-                extra_args[n++] = arg_host;
-                break;
-
-        case BUS_TRANSPORT_LOCAL:
-                break;
-
-        default:
-                assert_not_reached();
-        }
-
-        extra_args[n] = NULL;
-        return extra_args;
-}
-
 int verb_start(int argc, char *argv[], void *userdata) {
         _cleanup_(bus_wait_for_units_freep) BusWaitForUnits *wu = NULL;
         _cleanup_(bus_wait_for_jobs_freep) BusWaitForJobs *w = NULL;
@@ -405,11 +369,11 @@ int verb_start(int argc, char *argv[], void *userdata) {
                 }
 
         if (!arg_no_block) {
-                const char *extra_args[4];
                 WaitJobsFlags flags = 0;
 
                 SET_FLAG(flags, BUS_WAIT_JOBS_LOG_ERROR, !arg_quiet);
                 SET_FLAG(flags, BUS_WAIT_JOBS_LOG_SUCCESS, arg_show_transaction);
+
                 r = bus_wait_for_jobs(w, flags, make_extra_args(extra_args));
                 if (r < 0)
                         return r;
