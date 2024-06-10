@@ -4223,15 +4223,23 @@ static int unit_verify_contexts(const Unit *u, const ExecContext *ec) {
         if (!ec)
                 return 0;
 
+        bool needs_mountns = exec_needs_mount_namespace(ec, /* params = */ NULL, /* runtime = */ NULL);
+
         if (MANAGER_IS_USER(u->manager) && ec->dynamic_user)
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "DynamicUser= enabled for user unit, which is not supported. Refusing.");
 
         if (ec->dynamic_user && ec->working_directory_home)
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "WorkingDirectory=~ is not allowed under DynamicUser=yes. Refusing.");
 
-        if (ec->working_directory && path_below_api_vfs(ec->working_directory) &&
-            exec_needs_mount_namespace(ec, /* params = */ NULL, /* runtime = */ NULL))
+        if (needs_mountns && ec->working_directory && path_below_api_vfs(ec->working_directory))
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "WorkingDirectory= may not be below /proc/, /sys/ or /dev/ when using mount namespacing. Refusing.");
+
+        if (ec->refresh_credentials_on_reload) {
+                if (MANAGER_IS_USER(u->manager))
+                        log_unit_warning(u, "RefreshCredentialsOnReload= enabled for user unit, which is not supported. Ignoring.");
+                else if (needs_mountns)
+                        log_unit_warning(u, "RefreshCredentialsOnReload= enabled but mount namespace is not employed. Ignoring.");
+        }
 
         return 0;
 }
