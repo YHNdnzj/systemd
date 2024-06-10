@@ -4318,18 +4318,30 @@ static int unit_verify_contexts(const Unit *u) {
         if (!ec)
                 return 0;
 
+        bool needs_mountns = exec_needs_mount_namespace(ec, /* params = */ NULL, /* runtime = */ NULL);
+
         if (MANAGER_IS_USER(u->manager) && ec->dynamic_user)
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "DynamicUser= enabled for user unit, which is not supported. Refusing.");
 
         if (ec->dynamic_user && ec->working_directory_home)
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "WorkingDirectory=~ is not allowed under DynamicUser=yes. Refusing.");
 
-        if (ec->working_directory && path_below_api_vfs(ec->working_directory) &&
-            exec_needs_mount_namespace(ec, /* params = */ NULL, /* runtime = */ NULL))
+        if (needs_mountns && ec->working_directory && path_below_api_vfs(ec->working_directory))
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "WorkingDirectory= may not be below /proc/, /sys/ or /dev/ when using mount namespacing. Refusing.");
 
+<<<<<<< HEAD
         if (exec_needs_pid_namespace(ec, /* params= */ NULL) && !UNIT_VTABLE(u)->notify_pidref)
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "PrivatePIDs= setting is only supported for service units. Refusing.");
+||||||| parent of f39e78628b (wip: reload creds with RefreshCredentialsOnReload= or so)
+=======
+        // TODO
+        if (ec->refresh_credentials_on_reload) {
+                if (MANAGER_IS_USER(u->manager))
+                        log_unit_warning(u, "RefreshCredentialsOnReload= enabled for user unit, which is not supported. Ignoring.");
+                else if (!mount_new_api_supported())
+                        log_unit_warning(u, "... but new mount API is not supported by kernel. Ignoring.");
+        }
+>>>>>>> f39e78628b (wip: reload creds with RefreshCredentialsOnReload= or so)
 
         const KillContext *kc = unit_get_kill_context(u);
 

@@ -2803,6 +2803,9 @@ static void service_enter_reload(Service *s) {
          * that was already in progress before. */
         s->reload_begin_usec = now(CLOCK_MONOTONIC);
 
+
+        // #21099
+
         s->control_command = s->exec_command[SERVICE_EXEC_RELOAD];
         if (s->control_command) {
                 s->control_command_id = SERVICE_EXEC_RELOAD;

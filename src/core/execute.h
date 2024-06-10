@@ -290,7 +290,7 @@ typedef struct ExecContext {
         bool syslog_level_prefix;
         char *syslog_identifier;
 
-        struct iovec* log_extra_fields;
+        struct iovec *log_extra_fields;
         size_t n_log_extra_fields;
         Set *log_filter_allowed_patterns;
         Set *log_filter_denied_patterns;
@@ -363,6 +363,8 @@ typedef struct ExecContext {
         ExecDirectory directories[_EXEC_DIRECTORY_TYPE_MAX];
         ExecPreserveMode runtime_directory_preserve_mode;
         usec_t timeout_clean_usec;
+
+        bool refresh_credentials_on_reload;
 
         Hashmap *set_credentials; /* output id → ExecSetCredential */
         Hashmap *load_credentials; /* output id → ExecLoadCredential */
