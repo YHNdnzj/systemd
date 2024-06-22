@@ -681,19 +681,11 @@ int bus_machine_method_open_shell(sd_bus_message *message, void *userdata, sd_bu
         if (r == 0)
                 return 1; /* Will call us back */
 
-        master = machine_openpt(m, O_RDWR|O_NOCTTY|O_CLOEXEC, &pty_name);
+        master = machine_openpt(m, O_RDWR|O_NOCTTY|O_CLOEXEC, O_RDWR|O_NOCTTY|O_CLOEXEC, &pty_name, &slave);
         if (master < 0)
                 return master;
 
-        p = path_startswith(pty_name, "/dev/pts/");
-        assert(p);
-
-        slave = machine_open_terminal(m, pty_name, O_RDWR|O_NOCTTY|O_CLOEXEC);
-        if (slave < 0)
-                return slave;
-
-        utmp_id = path_startswith(pty_name, "/dev/");
-        assert(utmp_id);
+        utmp_id = ASSERT_PTR(path_startswith(pty_name, "/dev/"));
 
         r = container_bus_new(m, error, &allocated_bus);
         if (r < 0)

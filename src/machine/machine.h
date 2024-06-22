@@ -100,8 +100,15 @@ MachineState machine_state_from_string(const char *s) _pure_;
 const char* kill_whom_to_string(KillWhom k) _const_;
 KillWhom kill_whom_from_string(const char *s) _pure_;
 
-int machine_openpt(Machine *m, int flags, char **ret_slave);
-int machine_open_terminal(Machine *m, const char *path, int mode);
+int machine_openpt_full(
+                Machine *m,
+                int openpt_flags,
+                int open_terminal_flags,
+                char **ret_slave_path,
+                int *ret_slave_fd);
+static inline int machine_openpt(Machine *m, int flags, char **ret_slave) {
+        return machine_openpt_full(m, flags, 0, ret_slave, NULL);
+}
 
 int machine_get_uid_shift(Machine *m, uid_t *ret);
 

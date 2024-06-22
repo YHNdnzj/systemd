@@ -662,38 +662,27 @@ int machine_kill(Machine *m, KillWhom whom, int signo) {
         return manager_kill_unit(m->manager, m->unit, signo, NULL);
 }
 
-int machine_openpt(Machine *m, int flags, char **ret_slave) {
+int machine_openpt_full(
+                Machine *m,
+                int openpt_flags,
+                int open_terminal_flags,
+                char **ret_slave_path,
+                int *ret_slave_fd) {
+
         assert(m);
+        assert(ret_slave_fd || open_terminal_flags == 0);
 
         switch (m->class) {
 
         case MACHINE_HOST:
-                return openpt_allocate(flags, ret_slave);
+                return openpt_allocate_full(openpt_flags, open_terminal_flags, ret_slave_path, ret_slave_fd);
 
         case MACHINE_CONTAINER:
-                if (!pidref_is_set(&m->leader))
-                        return -EINVAL;
-
-                return openpt_allocate_in_namespace(m->leader.pid, flags, ret_slave);
-
-        default:
-                return -EOPNOTSUPP;
-        }
-}
-
-int machine_open_terminal(Machine *m, const char *path, int mode) {
-        assert(m);
-
-        switch (m->class) {
-
-        case MACHINE_HOST:
-                return open_terminal(path, mode);
-
-        case MACHINE_CONTAINER:
-                if (!pidref_is_set(&m->leader))
-                        return -EINVAL;
-
-                return open_terminal_in_namespace(m->leader.pid, path, mode);
+                return openpt_allocate_in_namespace(&m->leader,
+                                                    openpt_flags,
+                                                    open_terminal_flags,
+                                                    ret_slave_path,
+                                                    ret_slave_fd);
 
         default:
                 return -EOPNOTSUPP;
