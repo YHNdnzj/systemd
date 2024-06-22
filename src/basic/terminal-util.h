@@ -120,8 +120,23 @@ int getttyname_harder(int fd, char **ret);
 
 int ptsname_malloc(int fd, char **ret);
 
-int openpt_allocate(int flags, char **ret_slave);
-int openpt_allocate_in_namespace(pid_t pid, int flags, char **ret_slave);
+int openpt_allocate_full(
+                int openpt_flags,
+                int open_terminal_flags,
+                char **ret_slave_path,
+                int *ret_slave_fd);
+static inline int openpt_allocate(int flags, char **ret_slave) {
+        return openpt_allocate_full(flags, 0, ret_slave, NULL);
+}
+int openpt_allocate_in_namespace_full(
+                pid_t pid,
+                int openpt_flags,
+                int open_terminal_flags,
+                char **ret_slave_path,
+                int *ret_slave_fd);
+static inline int openpt_allocate_in_namespace(pid_t pid, int flags, char **ret_slave) {
+        return openpt_allocate_in_namespace_full(pid, flags, 0, ret_slave, NULL);
+}
 int open_terminal_in_namespace(pid_t pid, const char *name, int mode);
 
 int vt_restore(int fd);

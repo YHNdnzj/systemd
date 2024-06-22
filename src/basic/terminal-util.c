@@ -1198,17 +1198,24 @@ int ptsname_malloc(int fd, char **ret) {
         }
 }
 
-int openpt_allocate(int flags, char **ret_slave) {
-        _cleanup_close_ int fd = -EBADF;
+int openpt_allocate_full(
+                int openpt_flags,
+                int open_terminal_flags,
+                char **ret_slave_path,
+                int *ret_slave_fd) {
+
+        _cleanup_close_ int master = -EBADF;
         _cleanup_free_ char *p = NULL;
         int r;
 
-        fd = posix_openpt(flags|O_NOCTTY|O_CLOEXEC);
-        if (fd < 0)
+        assert(ret_slave_fd || open_terminal_flags == 0);
+
+        master = posix_openpt(openpt_flags|O_NOCTTY|O_CLOEXEC);
+        if (master < 0)
                 return -errno;
 
-        if (ret_slave) {
-                r = ptsname_malloc(fd, &p);
+        if (ret_slave_path || ret_slave_fd) {
+                r = ptsname_malloc(master, &p);
                 if (r < 0)
                         return r;
 
@@ -1219,10 +1226,17 @@ int openpt_allocate(int flags, char **ret_slave) {
         if (unlockpt(fd) < 0)
                 return -errno;
 
-        if (ret_slave)
+        if (ret_slave_fd) {
+                int slave = open_terminal(p, open_terminal_flags);
+                if (slave < 0)
+                        return slave;
+
+                *ret_slave_fd = slave;
+        }
+        if (ret_slave_path)
                 *ret_slave = TAKE_PTR(p);
 
-        return TAKE_FD(fd);
+        return TAKE_FD(master);
 }
 
 static int ptsname_namespace(int pty, char **ret) {
@@ -1244,15 +1258,29 @@ static int ptsname_namespace(int pty, char **ret) {
         return 0;
 }
 
-int openpt_allocate_in_namespace(pid_t pid, int flags, char **ret_slave) {
-        _cleanup_close_ int pidnsfd = -EBADF, mntnsfd = -EBADF, usernsfd = -EBADF, rootfd = -EBADF, fd = -EBADF;
+int openpt_allocate_in_namespace_full(
+                const PidRef *pidref,
+                int openpt_flags,
+                int open_terminal_flags,
+                char **ret_slave_path,
+                int *ret_slave_fd) {
+
+        _cleanup_close_ int pidnsfd = -EBADF, mntnsfd = -EBADF, usernsfd = -EBADF, rootfd = -EBADF;
         _cleanup_close_pair_ int pair[2] = EBADF_PAIR;
         pid_t child;
         int r;
 
-        assert(pid > 0);
+        assert(pidref);
+        assert(ret_slave_fd || open_terminal_flags == 0);
 
-        r = namespace_open(pid, &pidnsfd, &mntnsfd, /* ret_netns_fd = */ NULL, &usernsfd, &rootfd);
+        if (!pidref_is_set(pidref))
+                return -ESRCH;
+
+        r = namespace_open(pidref->pid, &pidnsfd, &mntnsfd, /* ret_netns_fd = */ NULL, &usernsfd, &rootfd);
+        if (r < 0)
+                return r;
+
+        r = pidref_verify(pidref);
         if (r < 0)
                 return r;
 
@@ -1260,17 +1288,22 @@ int openpt_allocate_in_namespace(pid_t pid, int flags, char **ret_slave) {
                 return -errno;
 
         r = namespace_fork("(sd-openptns)", "(sd-openpt)", NULL, 0, FORK_RESET_SIGNALS|FORK_DEATHSIG_SIGKILL,
-                           pidnsfd, mntnsfd, -1, usernsfd, rootfd, &child);
+                           pidnsfd, mntnsfd, -EBADF, usernsfd, rootfd, &child);
         if (r < 0)
                 return r;
         if (r == 0) {
+                int fds[2];
+
                 pair[0] = safe_close(pair[0]);
 
-                fd = openpt_allocate(flags, NULL);
-                if (fd < 0)
+                fds[0] = openpt_allocate_full(openpt_flags,
+                                              open_terminal_flags,
+                                              NULL,
+                                              ret_slave_fd ? &fds[1] : NULL);
+                if (fds[0] < 0)
                         _exit(EXIT_FAILURE);
 
-                if (send_one_fd(pair[1], fd, 0) < 0)
+                if (send_many_fds(pair[1], fds, ret_slave_fd ? 2 : 1, /* flags = */ 0) < 0)
                         _exit(EXIT_FAILURE);
 
                 _exit(EXIT_SUCCESS);
@@ -1284,15 +1317,24 @@ int openpt_allocate_in_namespace(pid_t pid, int flags, char **ret_slave) {
         if (r != EXIT_SUCCESS)
                 return -EIO;
 
-        fd = receive_one_fd(pair[0], 0);
-        if (fd < 0)
-                return fd;
+        int *fds = NULL;
+        size_t n_fds = 0;
 
-        if (ret_slave) {
-                r = ptsname_namespace(fd, ret_slave);
+        CLEANUP_ARRAY(fds, n_fds, close_many_and_free);
+
+        r = receive_many_fd(pair[0], &fds, &n_fds, /* flags = */ 0);
+        if (r < 0)
+                return r;
+
+        assert(n_fds == (ret_slave_fd ? 2 : 1));
+
+        if (ret_slave_path) {
+                r = ptsname_namespace(fd, ret_slave_path);
                 if (r < 0)
                         return r;
         }
+        if (ret_slave_fd)
+                *ret_slave_fd = *fds[1];
 
         return TAKE_FD(fd);
 }
