@@ -484,6 +484,7 @@ int bus_machine_method_open_pty(sd_bus_message *message, void *userdata, sd_bus_
         if (master < 0)
                 return master;
 
+        // Use sd_bus_reply_method_return
         r = sd_bus_message_new_method_return(message, &reply);
         if (r < 0)
                 return r;
@@ -1314,6 +1315,11 @@ static const sd_bus_vtable machine_vtable[] = {
                                 SD_BUS_RESULT("h", pty, "s", pty_path),
                                 bus_machine_method_open_pty,
                                 SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_ARGS("OpenPTYEx",
+                                SD_BUS_ARGS("s", user, "s", group, "u", mode, "t", flags),
+                                SD_BUS_RESULT("h", pty_master, "s", pty_slave_path, "h", pty_slave_fd),
+                                bus_machine_method_open_pty_ex,
+                                0),
         SD_BUS_METHOD_WITH_ARGS("OpenLogin",
                                 SD_BUS_NO_ARGS,
                                 SD_BUS_RESULT("h", pty, "s", pty_path),

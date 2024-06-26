@@ -515,6 +515,10 @@ static int method_open_machine_pty(sd_bus_message *message, void *userdata, sd_b
         return redirect_method_to_machine(message, userdata, error, bus_machine_method_open_pty);
 }
 
+static int method_open_machine_pty_ex(sd_bus_message *message, void *userdata, sd_bus_error *error) {
+        return redirect_method_to_machine(message, userdata, error, bus_machine_method_open_pty_ex);
+}
+
 static int method_open_machine_login(sd_bus_message *message, void *userdata, sd_bus_error *error) {
         return redirect_method_to_machine(message, userdata, error, bus_machine_method_open_login);
 }
@@ -1074,6 +1078,11 @@ const sd_bus_vtable manager_vtable[] = {
                                 SD_BUS_ARGS("s", name),
                                 SD_BUS_RESULT("h", pty, "s", pty_path),
                                 method_open_machine_pty,
+                                0),
+        SD_BUS_METHOD_WITH_ARGS("OpenMachinePTYEx",
+                                SD_BUS_ARGS("s", name, "s", user, "s", group, "u", mode, "t", flags),
+                                SD_BUS_RESULT("h", pty_master, "s", pty_slave_path, "h", pty_slave_fd),
+                                method_open_machine_pty_ex,
                                 0),
         SD_BUS_METHOD_WITH_ARGS("OpenMachineLogin",
                                 SD_BUS_ARGS("s", name),
