@@ -1276,11 +1276,7 @@ int openpt_allocate_in_namespace_full(
         if (!pidref_is_set(pidref))
                 return -ESRCH;
 
-        r = namespace_open(pidref->pid, &pidnsfd, &mntnsfd, /* ret_netns_fd = */ NULL, &usernsfd, &rootfd);
-        if (r < 0)
-                return r;
-
-        r = pidref_verify(pidref);
+        r = pidref_namespace_open(pidref, &pidnsfd, &mntnsfd, /* ret_netns_fd = */ NULL, &usernsfd, &rootfd);
         if (r < 0)
                 return r;
 
