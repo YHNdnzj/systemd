@@ -348,24 +348,14 @@ int bus_machine_method_get_addresses(sd_bus_message *message, void *userdata, sd
 }
 
 int bus_machine_method_get_ssh_info(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         Machine *m = ASSERT_PTR(userdata);
-        int r;
 
         assert(message);
-
-        r = sd_bus_message_new_method_return(message, &reply);
-        if (r < 0)
-                return r;
 
         if (!m->ssh_address || !m->ssh_private_key_path)
                 return -ENOENT;
 
-        r = sd_bus_message_append(reply, "ss", m->ssh_address, m->ssh_private_key_path);
-        if (r < 0)
-                return r;
-
-        return sd_bus_send(NULL, reply, NULL);
+        return sd_bus_reply_method_return(message, "ss", m->ssh_address, m->ssh_private_key_path);
 }
 
 #define EXIT_NOT_FOUND 2
@@ -456,10 +446,9 @@ int bus_machine_method_get_os_release(sd_bus_message *message, void *userdata, s
 }
 
 int bus_machine_method_open_pty(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        Machine *m = ASSERT_PTR(userdata);
         _cleanup_free_ char *pty_name = NULL;
         _cleanup_close_ int master = -EBADF;
-        Machine *m = ASSERT_PTR(userdata);
         int r;
 
         assert(message);
@@ -484,16 +473,7 @@ int bus_machine_method_open_pty(sd_bus_message *message, void *userdata, sd_bus_
         if (master < 0)
                 return master;
 
-        // Use sd_bus_reply_method_return
-        r = sd_bus_message_new_method_return(message, &reply);
-        if (r < 0)
-                return r;
-
-        r = sd_bus_message_append(reply, "hs", master, pty_name);
-        if (r < 0)
-                return r;
-
-        return sd_bus_send(NULL, reply, NULL);
+        return sd_bus_reply_method_return(message, "hs", master, pty_name);
 }
 
 static int container_bus_new(Machine *m, sd_bus_error *error, sd_bus **ret) {
@@ -542,12 +522,11 @@ static int container_bus_new(Machine *m, sd_bus_error *error, sd_bus **ret) {
 }
 
 int bus_machine_method_open_login(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        _cleanup_free_ char *pty_name = NULL;
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *allocated_bus = NULL;
-        _cleanup_close_ int master = -EBADF;
-        sd_bus *container_bus = NULL;
         Machine *m = ASSERT_PTR(userdata);
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *allocated_bus = NULL;
+        sd_bus *container_bus;
+        _cleanup_free_ char *pty_name = NULL;
+        _cleanup_close_ int master = -EBADF;
         const char *p, *getty;
         int r;
 
@@ -574,8 +553,7 @@ int bus_machine_method_open_login(sd_bus_message *message, void *userdata, sd_bu
         if (master < 0)
                 return master;
 
-        p = path_startswith(pty_name, "/dev/pts/");
-        assert(p);
+        p = ASSERT_PTR(path_startswith(pty_name, "/dev/pts/"));
 
         r = container_bus_new(m, error, &allocated_bus);
         if (r < 0)
@@ -589,19 +567,12 @@ int bus_machine_method_open_login(sd_bus_message *message, void *userdata, sd_bu
         if (r < 0)
                 return r;
 
-        r = sd_bus_message_new_method_return(message, &reply);
-        if (r < 0)
-                return r;
-
-        r = sd_bus_message_append(reply, "hs", master, pty_name);
-        if (r < 0)
-                return r;
-
-        return sd_bus_send(NULL, reply, NULL);
+        return sd_bus_reply_method_return(message, "hs", master, pty_name);
 }
 
 int bus_machine_method_open_shell(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL, *tm = NULL;
+        // TODO refactor
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *tm = NULL;
         _cleanup_free_ char *pty_name = NULL;
         _cleanup_(sd_bus_flush_close_unrefp) sd_bus *allocated_bus = NULL;
         sd_bus *container_bus = NULL;
@@ -822,15 +793,7 @@ int bus_machine_method_open_shell(sd_bus_message *message, void *userdata, sd_bu
 
         slave = safe_close(slave);
 
-        r = sd_bus_message_new_method_return(message, &reply);
-        if (r < 0)
-                return r;
-
-        r = sd_bus_message_append(reply, "hs", master, pty_name);
-        if (r < 0)
-                return r;
-
-        return sd_bus_send(NULL, reply, NULL);
+        return sd_bus_reply_method_return(message, "hs", master, pty_name);
 }
 
 int bus_machine_method_bind_mount(sd_bus_message *message, void *userdata, sd_bus_error *error) {
