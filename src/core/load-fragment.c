@@ -105,25 +105,38 @@ int parse_crash_chvt(const char *value, int *data) {
         return 0;
 }
 
-int parse_confirm_spawn(const char *value, char **console) {
+int parse_confirm_spawn(const char *value, char **ret_console) {
         char *s;
         int r;
 
+        assert(ret_console);
+
         r = value ? parse_boolean(value) : 1;
         if (r == 0) {
-                *console = NULL;
+                *ret_console = NULL;
                 return 0;
-        } else if (r > 0) /* on with default tty */
+        }
+        if (r > 0) { /* on with default tty */
                 s = strdup("/dev/console");
-        else if (is_path(value)) /* on with fully qualified path */
-                s = strdup(value);
-        else /* on with only a tty file name, not a fully qualified path */
-                s = path_join("/dev/", value);
-        if (!s)
-                return -ENOMEM;
+                if (!s)
+                        return -ENOMEM;
+        } else if (is_path(value)) {
+                /* on with fully qualified path */
+                if (!path_is_absolute(value))
+                        return -EINVAL;
 
-        *console = s;
-        return 0;
+                r = path_simplify_alloc(value, &s);
+                if (r < 0)
+                        return r;
+        } else {
+                /* on with only a tty file name, not a fully qualified path */
+                s = path_join("/dev/", value);
+                if (!s)
+                        return -ENOMEM;
+        }
+
+        *ret_console = s;
+        return 1;
 }
 
 DEFINE_CONFIG_PARSE(config_parse_socket_protocol, parse_socket_protocol);
