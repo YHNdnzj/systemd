@@ -454,19 +454,19 @@ static void service_release_fd_store(Service *s) {
         assert(s->n_fd_store == 0);
 }
 
-ServiceExtraFD* service_extra_fd_free(ServiceExtraFD *efd) {
-        if (!efd)
-                return NULL;
-
-        efd->fd = asynchronous_close(efd->fd);
-        free(efd->fdname);
-        return mfree(efd);
-}
-
 static void service_release_extra_fds(Service *s) {
         assert(s);
 
-        LIST_CLEAR(extra_fd, s->extra_fds, service_extra_fd_free);
+        if (!s->extra_fds)
+                return;
+
+        FOREACH_ARRAY(i, s->extra_fds, s->n_extra_fds) {
+                asynchronous_close(i->fd);
+                free(i->fdname);
+        }
+
+        s->extra_fds = mfree(s->extra_fds);
+        s->n_extra_fds = 0;
 }
 
 static void service_release_stdio_fd(Service *s) {
@@ -924,6 +924,12 @@ static int service_dump_fd(int fd, const char *fdname, const char *header, FILE 
         struct stat st;
         int flags;
 
+        assert(fd >= 0);
+        assert(fdname);
+        assert(header);
+        assert(f);
+        assert(prefix);
+
         if (fstat(fd, &st) < 0)
                 return log_debug_errno(errno, "Failed to stat fdstore entry: %m");
 
@@ -966,7 +972,7 @@ static void service_dump_extra_fds(Service *s, FILE *f, const char *prefix) {
         assert(f);
         assert(prefix);
 
-        LIST_FOREACH(extra_fd, i, s->extra_fds)
+        FOREACH_ARRAY(i, s->extra_fds, s->n_extra_fds)
                 (void) service_dump_fd(i->fd,
                                        i->fdname,
                                        i == s->extra_fds ? "Extra File Descriptor Entry:" : "                            ",
@@ -1112,6 +1118,7 @@ static void service_dump(Unit *u, FILE *f, const char *prefix) {
                         prefix, s->n_fd_store);
 
         service_dump_fdstore(s, f, prefix);
+        service_dump_extra_fds(s, f, prefix);
 
         if (s->open_files)
                 LIST_FOREACH(open_files, of, s->open_files) {
@@ -1127,8 +1134,6 @@ static void service_dump(Unit *u, FILE *f, const char *prefix) {
 
                         fprintf(f, "%sOpen File: %s\n", prefix, ofs);
                 }
-
-        service_dump_extra_fds(s, f, prefix);
 
         cgroup_context_dump(UNIT(s), f, prefix);
 }
@@ -1465,7 +1470,7 @@ static int service_collect_fds(
 
         _cleanup_strv_free_ char **rfd_names = NULL;
         _cleanup_free_ int *rfds = NULL;
-        size_t rn_socket_fds = 0, rn_storage_fds = 0, rn_extra_fds = 0;
+        size_t rn_socket_fds = 0;
         int r;
 
         assert(s);
@@ -1520,61 +1525,31 @@ static int service_collect_fds(
                 }
         }
 
-        if (s->n_fd_store > 0) {
-                size_t n_fds;
-                char **nl;
-                int *t;
-
-                t = reallocarray(rfds, rn_socket_fds + s->n_fd_store, sizeof(int));
+        if (s->n_fd_store + s->n_extra_fds > 0) {
+                int *t = reallocarray(rfds, rn_socket_fds + s->n_fd_store + s->n_extra_fds, sizeof(int));
                 if (!t)
                         return -ENOMEM;
-
                 rfds = t;
 
-                nl = reallocarray(rfd_names, rn_socket_fds + s->n_fd_store + 1, sizeof(char *));
+                char **nl = reallocarray(rfd_names, rn_socket_fds + s->n_fd_store s->n_extra_fds + 1, sizeof(char *));
                 if (!nl)
                         return -ENOMEM;
-
                 rfd_names = nl;
-                n_fds = rn_socket_fds;
+
+                size_t n_fds = rn_socket_fds;
 
                 LIST_FOREACH(fd_store, fs, s->fd_store) {
                         rfds[n_fds] = fs->fd;
-                        rfd_names[n_fds] = strdup(strempty(fs->fdname));
+                        rfd_names[n_fds] = strdup(fs->fdname);
                         if (!rfd_names[n_fds])
                                 return -ENOMEM;
 
-                        rn_storage_fds++;
                         n_fds++;
                 }
 
-                rfd_names[n_fds] = NULL;
-        }
-
-        LIST_FOREACH(extra_fd, extra_fd, s->extra_fds)
-                rn_extra_fds++;
-
-        if (rn_extra_fds > 0) {
-                size_t n_fds;
-                char **nl;
-                int *t;
-
-                t = reallocarray(rfds, rn_socket_fds + rn_storage_fds + rn_extra_fds, sizeof(int));
-                if (!t)
-                        return -ENOMEM;
-
-                rfds = t;
-
-                nl = reallocarray(rfd_names, rn_socket_fds + rn_storage_fds + rn_extra_fds + 1, sizeof(char *));
-                if (!nl)
-                        return -ENOMEM;
-
-                rfd_names = nl;
-                n_fds = rn_socket_fds + rn_storage_fds;
-
-                LIST_FOREACH(extra_fd, extra_fd, s->extra_fds) {
-                        rfds[n_fds] = extra_fd->fd;
-                        rfd_names[n_fds] = strdup(extra_fd->fdname);
+                FOREACH_ARRAY(i, s->extra_fds, s->n_extra_fds) {
+                        rfds[n_fds] = i->fd;
+                        rfd_names[n_fds] = strdup(i->fdname);
                         if (!rfd_names[n_fds])
                                 return -ENOMEM;
 
@@ -1587,8 +1562,8 @@ static int service_collect_fds(
         *fds = TAKE_PTR(rfds);
         *fd_names = TAKE_PTR(rfd_names);
         *n_socket_fds = rn_socket_fds;
-        *n_storage_fds = rn_storage_fds;
-        *n_extra_fds = rn_extra_fds;
+        *n_storage_fds = s->n_fd_store;
+        *n_extra_fds = s->n_extra_fds;
 
         return 0;
 }
