@@ -396,7 +396,6 @@ systemd.xml /refsect1[title="Kernel Command Line"]/variablelist/varlistentry[ter
 systemd.xml /refsect1[title="Kernel Command Line"]/variablelist/varlistentry[term="systemd.setenv="]
 systemd.xml /refsect1[title="Files"]/variablelist/varlistentry[term="/run/systemd/notify"]
 systemd.xml /refsect1[title="Files"]/variablelist/varlistentry[term="/run/systemd/private"]
-systemd.xml /refsect1[title="Files"]/variablelist/varlistentry[term="/dev/initctl"]
 telinit.xml /refsect1[title="Options"]/variablelist[1]/varlistentry[term="--help"]
 telinit.xml /refsect1[title="Options"]/variablelist[1]/varlistentry[term="--no-wall"]
 telinit.xml /refsect1[title="Options"]/variablelist[2]/varlistentry[term="0"]

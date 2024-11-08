@@ -94,10 +94,6 @@ conf.set10('HAVE_SPLIT_BIN', split_bin,
 
 have_standalone_binaries = get_option('standalone-binaries')
 
-sysvinit_path = get_option('sysvinit-path')
-sysvrcnd_path = get_option('sysvrcnd-path')
-conf.set10('HAVE_SYSV_COMPAT', sysvinit_path != '' and sysvrcnd_path != '',
-           description : 'SysV init scripts and rcN.d links are supported')
 conf.set10('CREATE_LOG_DIRS', get_option('create-log-dirs'))
 
 if get_option('hibernate') and not get_option('initrd')
@@ -261,7 +257,6 @@ conf.set_quoted('PREFIX',                                     prefixdir)
 conf.set_quoted('PREFIX_NOSLASH',                             prefixdir_noslash)
 conf.set_quoted('RANDOM_SEED',                                randomseeddir / 'random-seed')
 conf.set_quoted('RANDOM_SEED_DIR',                            randomseeddir)
-conf.set_quoted('RC_LOCAL_PATH',                              get_option('rc-local'))
 conf.set_quoted('SSHCONFDIR',                                 sshconfdir)
 conf.set_quoted('SSHDCONFDIR',                                sshdconfdir)
 conf.set_quoted('SHELLPROFILEDIR',                            shellprofiledir)
@@ -300,8 +295,6 @@ conf.set_quoted('SYSTEM_GENERATOR_DIR',                       systemgeneratordir
 conf.set_quoted('SYSTEM_PRESET_DIR',                          systempresetdir)
 conf.set_quoted('SYSTEM_SHUTDOWN_PATH',                       systemshutdowndir)
 conf.set_quoted('SYSTEM_SLEEP_PATH',                          systemsleepdir)
-conf.set_quoted('SYSTEM_SYSVINIT_PATH',                       sysvinit_path)
-conf.set_quoted('SYSTEM_SYSVRCND_PATH',                       sysvrcnd_path)
 conf.set_quoted('SYSUSERS_DIR',                               sysusersdir)
 conf.set_quoted('TMPFILES_DIR',                               tmpfilesdir)
 conf.set_quoted('USER_TMPFILES_DIR',                          usertmpfilesdir)
@@ -2373,7 +2366,6 @@ subdir('src/hostname')
 subdir('src/hwdb')
 subdir('src/id128')
 subdir('src/import')
-subdir('src/initctl')
 subdir('src/integritysetup')
 subdir('src/journal')
 subdir('src/journal-remote')
@@ -2403,7 +2395,6 @@ subdir('src/portable')
 subdir('src/pstore')
 subdir('src/quotacheck')
 subdir('src/random-seed')
-subdir('src/rc-local-generator')
 subdir('src/remount-fs')
 subdir('src/repart')
 subdir('src/reply-password')
@@ -2426,7 +2417,6 @@ subdir('src/system-update-generator')
 subdir('src/systemctl')
 subdir('src/sysupdate')
 subdir('src/sysusers')
-subdir('src/sysv-generator')
 subdir('src/storagetm')
 subdir('src/timedate')
 subdir('src/timesync')
@@ -2742,8 +2732,6 @@ subdir('test')
 
 #####################################################################
 
-subdir('docs/sysvinit')
-subdir('docs/var-log')
 subdir('hwdb.d')
 subdir('man')
 subdir('modprobe.d')
@@ -2964,8 +2952,6 @@ summary({
         'sysconf directory' :               sysconfdir,
         'include directory' :               includedir,
         'lib directory' :                   libdir,
-        'SysV init scripts' :               sysvinit_path,
-        'SysV rc?.d directories' :          sysvrcnd_path,
         'PAM modules directory' :           pamlibdir,
         'PAM configuration directory' :     pamconfdir,
         'ssh server configuration directory' : sshdconfdir,
@@ -2982,7 +2968,6 @@ summary({
         'bash completions directory' :      bashcompletiondir,
         'zsh completions directory' :       zshcompletiondir,
         'private shared lib version tag' :  shared_lib_tag,
-        'extra start script' :              get_option('rc-local'),
         'debug shell' :                     '@0@ @ @1@'.format(get_option('debug-shell'),
                                                                get_option('debug-tty')),
         'system UIDs' :                     '<=@0@ (alloc >=@1@)'.format(conf.get('SYSTEM_UID_MAX'),

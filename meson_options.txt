@@ -47,17 +47,17 @@ option('static-libudev', type : 'combo',
 option('standalone-binaries', type : 'boolean', value : false,
        description : 'also build standalone versions of supported binaries')
 
-option('sysvinit-path', type : 'string', value : '/etc/init.d',
+option('sysvinit-path', type : 'string', deprecated: true,
        description : 'the directory where the SysV init scripts are located')
-option('sysvrcnd-path', type : 'string', value : '/etc/rc.d',
-       description : 'the base directory for SysV rcN.d directories')
-option('rc-local', type : 'string',
-       value : '/etc/rc.local')
+option('sysvrcnd-path', type : 'string', deprecated: true,
+       description : 'This option is deprecated and will be removed in a future release')
+option('rc-local', type : 'string', deprecated: true,
+       description : 'This option is deprecated and will be removed in a future release')
 option('initrd', type : 'boolean',
        description : 'install services for use when running systemd in initrd')
 option('compat-mutable-uid-boundaries', type : 'boolean', value : false,
        description : 'look at uid boundaries in /etc/login.defs for compatibility')
-option('nscd', type : 'boolean',
+option('nscd', type : 'boolean', deprecated: true,
        description : 'This option is deprecated and will be removed in a future release')
 
 option('quotaon-path', type : 'string', description : 'path to quotaon')

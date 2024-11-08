@@ -3,7 +3,6 @@
 #include "bus-error.h"
 #include "bus-locator.h"
 #include "systemctl-is-enabled.h"
-#include "systemctl-sysv-compat.h"
 #include "systemctl-util.h"
 #include "systemctl.h"
 
@@ -66,13 +65,6 @@ int verb_is_enabled(int argc, char *argv[], void *userdata) {
         r = mangle_names("to check", strv_skip(argv, 1), &names);
         if (r < 0)
                 return r;
-
-        r = enable_sysv_units(argv[0], names);
-        if (r < 0)
-                return r;
-
-        not_found = r == 0; /* Doesn't have SysV support or SYSV_UNIT_NOT_FOUND */
-        enabled = r == SYSV_UNIT_ENABLED;
 
         if (install_client_side()) {
                 STRV_FOREACH(name, names) {

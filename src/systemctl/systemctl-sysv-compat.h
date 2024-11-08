@@ -3,8 +3,6 @@
 
 #include "time-util.h"
 
-int talk_initctl(char runlevel);
-
 int parse_shutdown_time_spec(const char *t, usec_t *ret);
 
 /* The init script exit codes for the LSB 'status' verb. (This is different from the 'start' verb, whose exit
@@ -29,13 +27,3 @@ enum {
         EXIT_PROGRAM_NOT_RUNNING                  = 3,
         EXIT_PROGRAM_OR_SERVICES_STATUS_UNKNOWN   = 4,
 };
-
-typedef enum SysVUnitEnableState {
-        SYSV_UNIT_NOT_FOUND = 0,
-        SYSV_UNIT_DISABLED,
-        SYSV_UNIT_ENABLED,
-} SysVUnitEnableState;
-
-int enable_sysv_units(const char *verb, char **args);
-
-int action_to_runlevel(void) _pure_;
