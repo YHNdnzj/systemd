@@ -47,13 +47,6 @@
     <citerefentry><refentrytitle>user@.service</refentrytitle><manvolnum>5</manvolnum></citerefentry>
     service.</para>
 
-    <para>For compatibility with SysV, if the binary is called as <command>init</command> and is not the
-    first process on the machine (PID is not 1), it will execute <command>telinit</command> and pass all
-    command line arguments unmodified. That means <command>init</command> and <command>telinit</command> are
-    mostly equivalent when invoked from normal login sessions. See
-    <citerefentry><refentrytitle>telinit</refentrytitle><manvolnum>8</manvolnum></citerefentry> for more
-    information.</para>
-
     <para>When run as a system instance, systemd interprets the
     configuration file <filename>system.conf</filename> and the files
     in <filename>system.conf.d</filename> directories; when run as a
@@ -320,32 +313,6 @@
         directories is provided in
         <citerefentry><refentrytitle>systemd.unit</refentrytitle><manvolnum>5</manvolnum></citerefentry>.
         </para></listitem>
-      </varlistentry>
-    </variablelist>
-
-    <variablelist>
-      <varlistentry>
-        <term>SysV init scripts directory</term>
-
-        <listitem><para>The location of the SysV init script directory
-        varies between distributions. If systemd cannot find a native
-        unit file for a requested service, it will look for a SysV
-        init script of the same name (with the
-        <filename>.service</filename> suffix
-        removed).</para></listitem>
-      </varlistentry>
-    </variablelist>
-
-    <variablelist>
-      <varlistentry>
-        <term>SysV runlevel link farm directory</term>
-
-        <listitem><para>The location of the SysV runlevel link farm
-        directory varies between distributions. systemd will take the
-        link farm into account when figuring out whether a service
-        shall be enabled. Note that a service unit with a native unit
-        configuration file cannot be started by activating it in the
-        SysV runlevel link farm.</para></listitem>
       </varlistentry>
     </variablelist>
   </refsect1>
@@ -1063,13 +1030,10 @@
         <term><varname>5</varname></term>
 
         <listitem><para>Boot into the specified legacy SysV runlevel.
-        These are equivalent to
-        <varname>systemd.unit=runlevel2.target</varname>,
-        <varname>systemd.unit=runlevel3.target</varname>,
-        <varname>systemd.unit=runlevel4.target</varname>, and
-        <varname>systemd.unit=runlevel5.target</varname>,
-        respectively, and provided for compatibility reasons and to be
-        easier to type.</para>
+        <literal>2</literal>, <literal>3</literal>, and <literal>4</literal> are equivalent to
+        <varname>systemd.unit=multi-user.target</varname>. <literal>5</literal> is equivalent to
+        <varname>systemd.unit=graphical.target</varname>. These are provided for compatibility reasons
+        and to be easier to type.</para>
 
         <xi:include href="version-info.xml" xpointer="v186"/></listitem>
       </varlistentry>
