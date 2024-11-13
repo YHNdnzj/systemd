@@ -20,160 +20,30 @@
 #include "user-util.h"
 #include "virt.h"
 
-static int cg_any_controller_used_for_v1(void) {
-        _cleanup_free_ char *buf = NULL;
-        _cleanup_strv_free_ char **lines = NULL;
-        int r;
+int cg_has_legacy(void) {
+        struct statfs fs;
 
-        r = read_full_virtual_file("/proc/cgroups", &buf, NULL);
-        if (r < 0)
-                return log_debug_errno(r, "Could not read /proc/cgroups, ignoring: %m");
+        /* Checks if any legacy controller/hierarchy is mounted. */
 
-        r = strv_split_newlines_full(&lines, buf, 0);
-        if (r < 0)
-                return r;
+        if (statfs("/sys/fs/cgroup/", &fs) < 0) {
+                if (errno == ENOENT)
+                        return false;
 
-        /* The intention of this is to check if the fully unified cgroup tree setup is possible, meaning all
-         * enabled kernel cgroup controllers are currently not in use by cgroup1.  For reference:
-         * https://systemd.io/CGROUP_DELEGATION/#three-different-tree-setups-
-         *
-         * Note that this is typically only useful to check inside a container where we don't know what
-         * cgroup tree setup is in use by the host; if the host is using legacy or hybrid, we can't use
-         * unified since some or all controllers would be missing. This is not the best way to detect this,
-         * as whatever container manager created our container should have mounted /sys/fs/cgroup
-         * appropriately, but in case that wasn't done, we try to detect if it's possible for us to use
-         * unified cgroups. */
-        STRV_FOREACH(line, lines) {
-                _cleanup_free_ char *name = NULL, *hierarchy_id = NULL, *num = NULL, *enabled = NULL;
-
-                /* Skip header line */
-                if (startswith(*line, "#"))
-                        continue;
-
-                const char *p = *line;
-                r = extract_many_words(&p, NULL, 0, &name, &hierarchy_id, &num, &enabled);
-                if (r < 0)
-                        return log_debug_errno(r, "Error parsing /proc/cgroups line, ignoring: %m");
-                else if (r < 4) {
-                        log_debug("Invalid /proc/cgroups line, ignoring.");
-                        continue;
-                }
-
-                /* Ignore disabled controllers. */
-                if (streq(enabled, "0"))
-                        continue;
-
-                /* Ignore controllers we don't care about. */
-                if (cgroup_controller_from_string(name) < 0)
-                        continue;
-
-                /* Since the unified cgroup doesn't use multiple hierarchies, if any controller has a
-                 * non-zero hierarchy_id that means it's in use already in a legacy (or hybrid) cgroup v1
-                 * hierarchy, and can't be used in a unified cgroup. */
-                if (!streq(hierarchy_id, "0")) {
-                        log_debug("Cgroup controller %s in use by legacy v1 hierarchy.", name);
-                        return 1;
-                }
+                return log_debug_errno(errno, "statfs(\"/sys/fs/cgroup/\") failed: %m");
         }
 
-        return 0;
-}
-
-bool cg_is_unified_wanted(void) {
-        static thread_local int wanted = -1;
-        int r;
-
-        /* If we have a cached value, return that. */
-        if (wanted >= 0)
-                return wanted;
-
-        /* If the hierarchy is already mounted, then follow whatever was chosen for it. */
-        r = cg_unified_cached(true);
-        if (r >= 0)
-                return (wanted = r >= CGROUP_UNIFIED_ALL);
-
-        /* If we have explicit configuration for v1 or v2, respect that. */
-        if (cg_is_legacy_force_enabled())
-                return (wanted = false);
-
-        bool b;
-        r = proc_cmdline_get_bool("systemd.unified_cgroup_hierarchy", /* flags = */ 0, &b);
-        if (r > 0 && b)
-                return (wanted = true);
-
-        /* If we passed cgroup_no_v1=all with no other instructions, it seems highly unlikely that we want to
-         * use hybrid or legacy hierarchy. */
-        _cleanup_free_ char *c = NULL;
-        r = proc_cmdline_get_key("cgroup_no_v1", 0, &c);
-        if (r > 0 && streq_ptr(c, "all"))
-                return (wanted = true);
-
-        /* If any controller is in use as v1, don't use unified. */
-        if (cg_any_controller_used_for_v1() > 0)
-                return (wanted = false);
-
-        return (wanted = true);
-
-}
-
-bool cg_is_legacy_wanted(void) {
-        /* Check if we have cgroup v2 already mounted. */
-        if (cg_unified_cached(true) == CGROUP_UNIFIED_ALL)
+        if (is_fs_type(&fs, CGROUP2_SUPER_MAGIC) ||
+            is_fs_type(&fs, SYSFS_MAGIC)) /* not mounted yet */
                 return false;
 
-        /* Otherwise, assume that at least partial legacy is wanted,
-         * since cgroup v2 should already be mounted at this point. */
-        return true;
-}
+        if (is_fs_type(&fs, TMPFS_MAGIC)) {
+                log_debug("Found tmpfs on /sys/fs/cgroup/, assuming legacy hierarchy enabled.");
+                return true;
+        }
 
-bool cg_is_hybrid_wanted(void) {
-        static thread_local int wanted = -1;
-        int r;
-
-        /* If we have a cached value, return that. */
-        if (wanted >= 0)
-                return wanted;
-
-        /* If the hierarchy is already mounted, then follow whatever was chosen for it. */
-        if (cg_unified_cached(true) == CGROUP_UNIFIED_ALL)
-                return (wanted = false);
-
-        /* Otherwise, let's see what the kernel command line has to say.  Since checking is expensive, cache
-         * a non-error result.
-         * The meaning of the kernel option is reversed wrt. to the return value of this function, hence the
-         * negation. */
-        bool b;
-        r = proc_cmdline_get_bool("systemd.legacy_systemd_cgroup_controller", /* flags = */ 0, &b);
-        if (r > 0)
-                return (wanted = !b);
-
-        /* The default hierarchy is "unified". But if this is reached, it means that unified hierarchy was
-         * not mounted, so return true too. */
-        return (wanted = true);
-}
-
-bool cg_is_legacy_enabled(void) {
-        int r;
-        bool b;
-
-        r = proc_cmdline_get_bool("systemd.unified_cgroup_hierarchy", /* flags = */ 0, &b);
-        return r > 0 && !b;
-}
-
-bool cg_is_legacy_force_enabled(void) {
-        int r;
-        bool b;
-
-        /* Require both systemd.unified_cgroup_hierarchy=0 and SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE=1. */
-
-        if (!cg_is_legacy_enabled())
-                return false;
-
-        r = proc_cmdline_get_bool("SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE", /* flags = */ 0, &b);
-        if (r <= 0 || !b)
-                return false;
-
-        return true;
+        return log_debug_errno(SYNTHETIC_ERRNO(ENOMEDIUM),
+                               "Unknown filesystem type %llx mounted on /sys/fs/cgroup/.",
+                               (unsigned long long) fs.f_type);
 }
 
 int cg_weight_parse(const char *s, uint64_t *ret) {
@@ -209,51 +79,6 @@ int cg_cpu_weight_parse(const char *s, uint64_t *ret) {
         return cg_weight_parse(s, ret);
 }
 
-int cg_cpu_shares_parse(const char *s, uint64_t *ret) {
-        uint64_t u;
-        int r;
-
-        assert(s);
-        assert(ret);
-
-        if (isempty(s)) {
-                *ret = CGROUP_CPU_SHARES_INVALID;
-                return 0;
-        }
-
-        r = safe_atou64(s, &u);
-        if (r < 0)
-                return r;
-
-        if (u < CGROUP_CPU_SHARES_MIN || u > CGROUP_CPU_SHARES_MAX)
-                return -ERANGE;
-
-        *ret = u;
-        return 0;
-}
-
-int cg_blkio_weight_parse(const char *s, uint64_t *ret) {
-        uint64_t u;
-        int r;
-
-        assert(s);
-        assert(ret);
-
-        if (isempty(s)) {
-                *ret = CGROUP_BLKIO_WEIGHT_INVALID;
-                return 0;
-        }
-
-        r = safe_atou64(s, &u);
-        if (r < 0)
-                return r;
-
-        if (u < CGROUP_BLKIO_WEIGHT_MIN || u > CGROUP_BLKIO_WEIGHT_MAX)
-                return -ERANGE;
-
-        *ret = u;
-        return 0;
-}
 
 static int trim_cb(
                 RecurseDirEvent event,
@@ -671,111 +496,6 @@ int cg_migrate(
         return ret;
 }
 
-int cg_create_everywhere(CGroupMask supported, CGroupMask mask, const char *path) {
-        CGroupController c;
-        CGroupMask done;
-        bool created;
-        int r;
-
-        /* This one will create a cgroup in our private tree, but also
-         * duplicate it in the trees specified in mask, and remove it
-         * in all others.
-         *
-         * Returns 0 if the group already existed in the systemd hierarchy,
-         * 1 on success, negative otherwise.
-         */
-
-        /* First create the cgroup in our own hierarchy. */
-        r = cg_create(SYSTEMD_CGROUP_CONTROLLER, path);
-        if (r < 0)
-                return r;
-        created = r;
-
-        /* If we are in the unified hierarchy, we are done now */
-        r = cg_all_unified();
-        if (r < 0)
-                return r;
-        if (r > 0)
-                return created;
-
-        supported &= CGROUP_MASK_V1;
-        mask = CGROUP_MASK_EXTEND_JOINED(mask);
-        done = 0;
-
-        /* Otherwise, do the same in the other hierarchies */
-        for (c = 0; c < _CGROUP_CONTROLLER_MAX; c++) {
-                CGroupMask bit = CGROUP_CONTROLLER_TO_MASK(c);
-                const char *n;
-
-                if (!FLAGS_SET(supported, bit))
-                        continue;
-
-                if (FLAGS_SET(done, bit))
-                        continue;
-
-                n = cgroup_controller_to_string(c);
-                if (FLAGS_SET(mask, bit))
-                        (void) cg_create(n, path);
-
-                done |= CGROUP_MASK_EXTEND_JOINED(bit);
-        }
-
-        return created;
-}
-
-int cg_attach_everywhere(CGroupMask supported, const char *path, pid_t pid) {
-        int r;
-
-        assert(path);
-        assert(pid >= 0);
-
-        r = cg_attach(SYSTEMD_CGROUP_CONTROLLER, path, pid);
-        if (r < 0)
-                return r;
-
-        r = cg_all_unified();
-        if (r < 0)
-                return r;
-        if (r > 0)
-                return 0;
-
-        supported &= CGROUP_MASK_V1;
-        CGroupMask done = 0;
-
-        for (CGroupController c = 0; c < _CGROUP_CONTROLLER_MAX; c++) {
-                CGroupMask bit = CGROUP_CONTROLLER_TO_MASK(c);
-
-                if (!FLAGS_SET(supported, bit))
-                        continue;
-
-                if (FLAGS_SET(done, bit))
-                        continue;
-
-                (void) cg_attach_fallback(cgroup_controller_to_string(c), path, pid);
-                done |= CGROUP_MASK_EXTEND_JOINED(bit);
-        }
-
-        return 0;
-}
-
-int cg_trim_everywhere(CGroupMask supported, const char *path, bool delete_root) {
-        int r, q;
-
-        assert(path);
-
-        r = cg_trim(SYSTEMD_CGROUP_CONTROLLER, path, delete_root);
-        if (r < 0)
-                return r;
-
-        q = cg_all_unified();
-        if (q < 0)
-                return q;
-        if (q > 0)
-                return r;
-
-        return cg_trim_v1_controllers(supported, _CGROUP_MASK_ALL, path, delete_root);
-}
-
 int cg_enable_everywhere(
                 CGroupMask supported,
                 CGroupMask mask,
@@ -959,154 +679,4 @@ int cg_migrate_recursive_fallback(
         }
 
         return r;
-}
-
-int cg_migrate_v1_controllers(CGroupMask supported, CGroupMask mask, const char *from, cg_migrate_callback_t to_callback, void *userdata) {
-        CGroupController c;
-        CGroupMask done;
-        int r = 0, q;
-
-        assert(to_callback);
-
-        supported &= CGROUP_MASK_V1;
-        mask = CGROUP_MASK_EXTEND_JOINED(mask);
-        done = 0;
-
-        for (c = 0; c < _CGROUP_CONTROLLER_MAX; c++) {
-                CGroupMask bit = CGROUP_CONTROLLER_TO_MASK(c);
-                const char *to = NULL;
-
-                if (!FLAGS_SET(supported, bit))
-                        continue;
-
-                if (FLAGS_SET(done, bit))
-                        continue;
-
-                if (!FLAGS_SET(mask, bit))
-                        continue;
-
-                to = to_callback(bit, userdata);
-
-                /* Remember first error and try continuing */
-                q = cg_migrate_recursive_fallback(SYSTEMD_CGROUP_CONTROLLER, from, cgroup_controller_to_string(c), to, 0);
-                r = (r < 0) ? r : q;
-
-                done |= CGROUP_MASK_EXTEND_JOINED(bit);
-        }
-
-        return r;
-}
-
-int cg_trim_v1_controllers(CGroupMask supported, CGroupMask mask, const char *path, bool delete_root) {
-        CGroupController c;
-        CGroupMask done;
-        int r = 0, q;
-
-        supported &= CGROUP_MASK_V1;
-        mask = CGROUP_MASK_EXTEND_JOINED(mask);
-        done = 0;
-
-        for (c = 0; c < _CGROUP_CONTROLLER_MAX; c++) {
-                CGroupMask bit = CGROUP_CONTROLLER_TO_MASK(c);
-
-                if (!FLAGS_SET(supported, bit))
-                        continue;
-
-                if (FLAGS_SET(done, bit))
-                        continue;
-
-                if (FLAGS_SET(mask, bit)) {
-                        /* Remember first error and try continuing */
-                        q = cg_trim(cgroup_controller_to_string(c), path, delete_root);
-                        r = (r < 0) ? r : q;
-                }
-                done |= CGROUP_MASK_EXTEND_JOINED(bit);
-        }
-
-        return r;
-}
-
-int cg_install_release_agent(const char *controller, const char *agent) {
-        _cleanup_free_ char *fs = NULL, *contents = NULL;
-        const char *sc;
-        int r;
-
-        assert(agent);
-
-        r = cg_unified_controller(controller);
-        if (r < 0)
-                return r;
-        if (r > 0) /* doesn't apply to unified hierarchy */
-                return -EOPNOTSUPP;
-
-        r = cg_get_path(controller, NULL, "release_agent", &fs);
-        if (r < 0)
-                return r;
-
-        r = read_one_line_file(fs, &contents);
-        if (r < 0)
-                return r;
-
-        sc = strstrip(contents);
-        if (isempty(sc)) {
-                r = write_string_file(fs, agent, WRITE_STRING_FILE_DISABLE_BUFFER);
-                if (r < 0)
-                        return r;
-        } else if (!path_equal(sc, agent))
-                return -EEXIST;
-
-        fs = mfree(fs);
-        r = cg_get_path(controller, NULL, "notify_on_release", &fs);
-        if (r < 0)
-                return r;
-
-        contents = mfree(contents);
-        r = read_one_line_file(fs, &contents);
-        if (r < 0)
-                return r;
-
-        sc = strstrip(contents);
-        if (streq(sc, "0")) {
-                r = write_string_file(fs, "1", WRITE_STRING_FILE_DISABLE_BUFFER);
-                if (r < 0)
-                        return r;
-
-                return 1;
-        }
-
-        if (!streq(sc, "1"))
-                return -EIO;
-
-        return 0;
-}
-
-int cg_uninstall_release_agent(const char *controller) {
-        _cleanup_free_ char *fs = NULL;
-        int r;
-
-        r = cg_unified_controller(controller);
-        if (r < 0)
-                return r;
-        if (r > 0) /* Doesn't apply to unified hierarchy */
-                return -EOPNOTSUPP;
-
-        r = cg_get_path(controller, NULL, "notify_on_release", &fs);
-        if (r < 0)
-                return r;
-
-        r = write_string_file(fs, "0", WRITE_STRING_FILE_DISABLE_BUFFER);
-        if (r < 0)
-                return r;
-
-        fs = mfree(fs);
-
-        r = cg_get_path(controller, NULL, "release_agent", &fs);
-        if (r < 0)
-                return r;
-
-        r = write_string_file(fs, "", WRITE_STRING_FILE_DISABLE_BUFFER);
-        if (r < 0)
-                return r;
-
-        return 0;
 }

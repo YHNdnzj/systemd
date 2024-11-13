@@ -3043,6 +3043,17 @@ int main(int argc, char *argv[]) {
         /* Make sure that if the user says "syslog" we actually log to the journal. */
         log_set_upgrade_syslog_to_journal(true);
 
+        r = cg_has_legacy();
+        if (r < 0) {
+                error_message = "Failed to check current cgroup hierarchy";
+                goto finish;
+        }
+        if (r == 0) {
+                r = -ENOSYS;
+                error_message = "Detected legacy cgroup hierarchy, which is no longer supported";
+                goto finish;
+        }
+
         if (getpid_cached() == 1) {
                 /* When we run as PID 1 force system mode */
                 arg_runtime_scope = RUNTIME_SCOPE_SYSTEM;
@@ -3152,14 +3163,6 @@ int main(int argc, char *argv[]) {
                 if (r < 0) {
                         error_message = "Failed to mount API filesystems";
                         goto finish;
-                }
-
-                if (!skip_setup) {
-                        r = mount_cgroup_legacy_controllers(loaded_policy);
-                        if (r < 0) {
-                                error_message = "Failed to mount cgroup v1 hierarchy";
-                                goto finish;
-                        }
                 }
 
                 /* The efivarfs is now mounted, let's lock down the system token. */
