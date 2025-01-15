@@ -55,7 +55,7 @@ static int property_get_cgroup_mask(
                 return r;
 
         for (CGroupController ctrl = 0; ctrl < _CGROUP_CONTROLLER_MAX; ctrl++) {
-                if ((*mask & CGROUP_CONTROLLER_TO_MASK(ctrl)) == 0)
+                if ((*mask & INDEX_TO_MASK(ctrl)) == 0)
                         continue;
 
                 r = sd_bus_message_append(reply, "s", cgroup_controller_to_string(ctrl));
@@ -603,7 +603,7 @@ static int bus_cgroup_set_transient_property(
                         if (cc < 0)
                                 return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Unknown cgroup controller '%s'", t);
 
-                        mask |= CGROUP_CONTROLLER_TO_MASK(cc);
+                        mask |= INDEX_TO_MASK(cc);
                 }
 
                 r = sd_bus_message_exit_container(message);
@@ -1720,82 +1720,7 @@ int bus_cgroup_set_property(
                 return 1;
 
         } else if (streq(name, "BlockIODeviceWeight")) {
-                const char *path;
-                uint64_t weight;
-                unsigned n = 0;
-
-                r = sd_bus_message_enter_container(message, 'a', "(st)");
-                if (r < 0)
-                        return r;
-
-                while ((r = sd_bus_message_read(message, "(st)", &path, &weight)) > 0) {
-
-                        if (!path_is_normalized(path))
-                                return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Path '%s' specified in %s= is not normalized.", name, path);
-
-                        if (!CGROUP_BLKIO_WEIGHT_IS_OK(weight) || weight == CGROUP_BLKIO_WEIGHT_INVALID)
-                                return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "BlockIODeviceWeight= out of range");
-
-                        if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                CGroupBlockIODeviceWeight *a = NULL;
-
-                                LIST_FOREACH(device_weights, b, c->blockio_device_weights)
-                                        if (path_equal(b->path, path)) {
-                                                a = b;
-                                                break;
-                                        }
-
-                                if (!a) {
-                                        a = new0(CGroupBlockIODeviceWeight, 1);
-                                        if (!a)
-                                                return -ENOMEM;
-
-                                        a->path = strdup(path);
-                                        if (!a->path) {
-                                                free(a);
-                                                return -ENOMEM;
-                                        }
-                                        LIST_APPEND(device_weights, c->blockio_device_weights, a);
-                                }
-
-                                a->weight = weight;
-                        }
-
-                        n++;
-                }
-
-                r = sd_bus_message_exit_container(message);
-                if (r < 0)
-                        return r;
-
-                if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
-                        _cleanup_free_ char *buf = NULL;
-                        FILE *f;
-
-                        if (n == 0)
-                                while (c->blockio_device_weights)
-                                        cgroup_context_free_blockio_device_weight(c, c->blockio_device_weights);
-
-                        unit_invalidate_cgroup(u, CGROUP_MASK_BLKIO);
-
-                        f = memstream_init(&m);
-                        if (!f)
-                                return -ENOMEM;
-
-                        fputs("BlockIODeviceWeight=\n", f);
-                        LIST_FOREACH(device_weights, a, c->blockio_device_weights)
-                                fprintf(f, "BlockIODeviceWeight=%s %" PRIu64 "\n", a->path, a->weight);
-
-                        r = memstream_finalize(&m, &buf, NULL);
-                        if (r < 0)
-                                return r;
-
-                        unit_write_setting(u, flags, name, buf);
-                }
-
-                return 1;
-
+                // TODO
         } else if (streq(name, "DevicePolicy")) {
                 const char *policy;
                 CGroupDevicePolicy p;
