@@ -157,7 +157,7 @@ TEST(condition_test_control_group_controller) {
         for (CGroupController controller = 0; controller < _CGROUP_CONTROLLER_MAX; controller++) {
                 const char *local_controller_name = cgroup_controller_to_string(controller);
                 log_info("chosen controller is '%s'", local_controller_name);
-                if (system_mask & CGROUP_CONTROLLER_TO_MASK(controller)) {
+                if (system_mask & INDEX_TO_MASK(controller)) {
                         log_info("this controller is available");
                         ASSERT_NOT_NULL((condition = condition_new(CONDITION_CONTROL_GROUP_CONTROLLER, local_controller_name, false, false)));
                         ASSERT_OK_POSITIVE(condition_test(condition, environ));

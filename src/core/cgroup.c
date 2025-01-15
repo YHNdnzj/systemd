@@ -3017,7 +3017,7 @@ int unit_check_oomd_kill(Unit *u) {
         if (!crt || !crt->cgroup_path)
                 return 0;
 
-        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_ooms", &value, /* ret_size= */ NULL);
+        r = cg_get_xattr(crt->cgroup_path, "user.oomd_ooms", &value, /* ret_size= */ NULL);
         if (r < 0 && !ERRNO_IS_XATTR_ABSENT(r))
                 return r;
 
@@ -3035,7 +3035,7 @@ int unit_check_oomd_kill(Unit *u) {
 
         n = 0;
         value = mfree(value);
-        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_kill", &value, /* ret_size= */ NULL);
+        r = cg_get_xattr(crt->cgroup_path, "user.oomd_kill", &value, /* ret_size= */ NULL);
         if (r >= 0 && !isempty(value))
                 (void) safe_atou64(value, &n);
 
@@ -3371,7 +3371,7 @@ int manager_setup_cgroup(Manager *m) {
         /* 8. Log which controllers are supported */
         for (CGroupController c = 0; c < _CGROUP_CONTROLLER_MAX; c++)
                 log_debug("Controller '%s' supported: %s", cgroup_controller_to_string(c),
-                          yes_no(m->cgroup_supported & CGROUP_CONTROLLER_TO_MASK(c)));
+                          yes_no(m->cgroup_supported & INDEX_TO_MASK(c)));
 
         return 0;
 }

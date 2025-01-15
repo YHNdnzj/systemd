@@ -74,7 +74,7 @@ static void test_oomd_cgroup_kill(void) {
                         abort();
                 }
 
-                ASSERT_OK(cg_get_xattr_malloc(cgroup, "user.oomd_ooms", &v, /* ret_size= */ NULL));
+                ASSERT_OK(cg_get_xattr(cgroup, "user.oomd_ooms", &v, /* ret_size= */ NULL));
                 assert_se(streq(v, i == 0 ? "1" : "2"));
                 v = mfree(v);
 
@@ -82,7 +82,13 @@ static void test_oomd_cgroup_kill(void) {
                 sleep(2);
                 assert_se(cg_is_empty(SYSTEMD_CGROUP_CONTROLLER, cgroup) == true);
 
+<<<<<<< HEAD
                 ASSERT_OK(cg_get_xattr_malloc(cgroup, "user.oomd_kill", &v, /* ret_size= */ NULL));
+||||||| parent of bd40c1c868 (wip)
+                assert_se(cg_get_xattr_malloc(cgroup, "user.oomd_kill", &v) >= 0);
+=======
+                assert_se(cg_get_xattr(cgroup, "user.oomd_kill", &v) >= 0);
+>>>>>>> bd40c1c868 (wip)
                 assert_se(streq(v, i == 0 ? "2" : "4"));
         }
 }

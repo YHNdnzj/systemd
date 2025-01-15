@@ -4005,7 +4005,7 @@ int config_parse_delegate(
                                 continue;
                         }
 
-                        mask |= CGROUP_CONTROLLER_TO_MASK(cc);
+                        mask |= INDEX_TO_MASK(cc);
                 }
 
                 c->delegate = true;

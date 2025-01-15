@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include "bitfield.h"
 #include "cgroup-setup.h"
 #include "cgroup-util.h"
 #include "errno-util.h"
@@ -15,6 +16,7 @@
 #include "path-util.h"
 #include "process-util.h"
 #include "recurse-dir.h"
+#include "stat-util.h"
 #include "stdio-util.h"
 #include "string-util.h"
 #include "user-util.h"
@@ -66,22 +68,22 @@ static int trim_cb(
             de->d_type == DT_DIR &&
             unlinkat(dir_fd, de->d_name, AT_REMOVEDIR) < 0 &&
             !IN_SET(errno, ENOENT, ENOTEMPTY, EBUSY))
-                log_debug_errno(errno, "Failed to trim inner cgroup %s, ignoring: %m", path);
+                log_debug_errno(errno, "Failed to trim inner cgroup '%s', ignoring: %m", path);
 
         return RECURSE_DIR_CONTINUE;
 }
 
-int cg_trim(const char *path, bool delete_root) {
-        _cleanup_free_ char *fs = NULL;
+int cg_trim(int cgroupfs_fd, const char *path, bool delete_root) {
+        _cleanup_free_ char *p = NULL;
         int r;
 
-        r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, path, NULL, &fs);
+        r = cg_get_path(cgroupfs_fd, path, /* suffix = */ NULL, &p);
         if (r < 0)
                 return r;
 
         r = recurse_dir_at(
-                        AT_FDCWD,
-                        fs,
+                        cgroupfs_fd,
+                        p,
                         /* statx_mask = */ 0,
                         /* n_depth_max = */ UINT_MAX,
                         RECURSE_DIR_ENSURE_TYPE,
@@ -96,7 +98,7 @@ int cg_trim(const char *path, bool delete_root) {
          * already gone anyway). Also, let's debug log about this failure, except if the error code is an
          * expected one. */
         if (delete_root && !empty_or_root(path) &&
-            rmdir(fs) < 0 && errno != ENOENT) {
+            rmdirat(cgroupfs_fd, path) < 0 && errno != ENOENT) {
                 if (!IN_SET(errno, ENOTEMPTY, EBUSY))
                         log_debug_errno(errno, "Failed to trim cgroup '%s': %m", path);
                 RET_GATHER(r, -errno);
@@ -105,22 +107,21 @@ int cg_trim(const char *path, bool delete_root) {
         return r;
 }
 
-/* Create a cgroup in the hierarchy of controller.
- * Returns 0 if the group already existed, 1 on success, negative otherwise.
- */
-int cg_create(const char *path) {
-        _cleanup_free_ char *fs = NULL;
+int cg_create(int cgroupfs_fd, const char *path) {
+        _cleanup_free_ char *p = NULL;
         int r;
 
-        r = cg_get_path_and_check(SYSTEMD_CGROUP_CONTROLLER, path, NULL, &fs);
+        /* Returns 0 if the group already existed, 1 on success, negative otherwise. */
+
+        r = cg_get_path(cgroupfs_fd, path, /* suffix = */ NULL, &p);
         if (r < 0)
                 return r;
 
-        r = mkdir_parents(fs, 0755);
+        r = mkdirat_parents(cgroupfs_fd, p, 0755);
         if (r < 0)
                 return r;
 
-        r = RET_NERRNO(mkdir(fs, 0755));
+        r = RET_NERRNO(mkdirat(cgroupfs_fd, p, 0755));
         if (r == -EEXIST)
                 return 0;
         if (r < 0)
@@ -129,24 +130,20 @@ int cg_create(const char *path) {
         return 1;
 }
 
-int cg_attach(const char *path, pid_t pid) {
-        _cleanup_free_ char *fs = NULL;
-        char c[DECIMAL_STR_MAX(pid_t) + 2];
+int cg_attach(int cgroupfs_fd, const char *path, pid_t pid) {
+        _cleanup_free_ char *p = NULL;
         int r;
 
-        assert(path);
         assert(pid >= 0);
-
-        r = cg_get_path_and_check(SYSTEMD_CGROUP_CONTROLLER, path, "cgroup.procs", &fs);
-        if (r < 0)
-                return r;
 
         if (pid == 0)
                 pid = getpid_cached();
 
-        xsprintf(c, PID_FMT "\n", pid);
+        r = cg_get_path(cgroupfs_fd, path, "cgroup.procs", &p);
+        if (r < 0)
+                return r;
 
-        r = write_string_file(fs, c, WRITE_STRING_FILE_DISABLE_BUFFER);
+        r = write_string_filef(p, WRITE_STRING_FILE_DISABLE_BUFFER, PID_FMT, pid);
         if (r == -EOPNOTSUPP && cg_is_threaded(path) > 0)
                 /* When the threaded mode is used, we cannot read/write the file. Let's return recognizable error. */
                 return -EUCLEAN;
@@ -167,28 +164,37 @@ int cg_fd_attach(int fd, pid_t pid) {
 
         xsprintf(c, PID_FMT "\n", pid);
 
-        return write_string_file_at(fd, "cgroup.procs", c, WRITE_STRING_FILE_DISABLE_BUFFER);
+        r = write_string_file_at(fd, "cgroup.procs", c, WRITE_STRING_FILE_DISABLE_BUFFER);
+        if (r == -EOPNOTSUPP && cg_is_threaded(path) > 0)
+                /* When the threaded mode is used, we cannot read/write the file. Let's return recognizable error. */
+                return -EUCLEAN;
+        if (r < 0)
+                return r;
+
+        return 0;
 }
 
-int cg_create_and_attach(const char *path, pid_t pid) {
-        int r, q;
+int cg_create_and_attach(int cgroupfs_fd, const char *path, pid_t pid) {
+        int r, ret;
 
         /* This does not remove the cgroup on failure */
 
         assert(pid >= 0);
+        assert(path);
 
-        r = cg_create(path);
+        ret = cg_create(cgroupfs_fd, path);
+        if (ret < 0)
+                return ret;
+
+        r = cg_attach(cgroupfs_fd, path, pid);
         if (r < 0)
                 return r;
 
-        q = cg_attach(path, pid);
-        if (q < 0)
-                return q;
-
-        return r;
+        return ret;
 }
 
 int cg_set_access(
+                int cgroupfs_fd,
                 const char *path,
                 uid_t uid,
                 gid_t gid) {
@@ -204,7 +210,7 @@ int cg_set_access(
                 { "memory.reclaim",         false },
         };
 
-        _cleanup_free_ char *fs = NULL;
+        _cleanup_free_ char *p = NULL;
         int r;
 
         assert(path);
@@ -213,26 +219,26 @@ int cg_set_access(
                 return 0;
 
         /* Configure access to the cgroup itself */
-        r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, path, NULL, &fs);
+        r = cg_get_path(cgroupfs_fd, path, /* suffix = */ NULL, &p);
         if (r < 0)
                 return r;
 
-        r = chmod_and_chown(fs, 0755, uid, gid);
+        r = chmod_and_chown_at(cgroupfs_fd, p, 0755, uid, gid);
         if (r < 0)
                 return r;
 
         /* Configure access to the cgroup's attributes */
         FOREACH_ELEMENT(i, attributes) {
-                _cleanup_free_ char *a = path_join(fs, i->name);
+                _cleanup_free_ char *a = path_join(p, i->name);
                 if (!a)
                         return -ENOMEM;
 
-                r = chmod_and_chown(a, 0644, uid, gid);
+                r = chmod_and_chown_at(cgroupfs_fd, a, 0644, uid, gid);
                 if (r < 0) {
                         if (i->fatal)
                                 return r;
 
-                        log_debug_errno(r, "Failed to set access on cgroup %s, ignoring: %m", a);
+                        log_debug_errno(r, "Failed to set access of attr '%s' on cgroup '%s', ignoring: %m", i->name, p);
                 }
         }
 
@@ -269,12 +275,13 @@ static int access_callback(
 }
 
 int cg_set_access_recursive(
+                int cgroupfs_fd,
                 const char *path,
                 uid_t uid,
                 gid_t gid) {
 
         _cleanup_close_ int fd = -EBADF;
-        _cleanup_free_ char *fs = NULL;
+        _cleanup_free_ char *p = NULL;
         int r;
 
         assert(path);
@@ -286,21 +293,16 @@ int cg_set_access_recursive(
         if (!uid_is_valid(uid) && !gid_is_valid(gid))
                 return 0;
 
-        r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, path, NULL, &fs);
+        r = cg_get_path(cgroupfs_fd, path, /* suffix = */ NULL, &p);
         if (r < 0)
                 return r;
-
-        fd = open(fs, O_DIRECTORY|O_CLOEXEC);
-        if (fd < 0)
-                return -errno;
 
         struct access_callback_data d = {
                 .uid = uid,
                 .gid = gid,
         };
 
-        r = recurse_dir(fd,
-                        fs,
+        r = recurse_dir(cgroupfs_fd, p,
                         /* statx_mask= */ 0,
                         /* n_depth_max= */ UINT_MAX,
                         RECURSE_DIR_SAME_MOUNT|RECURSE_DIR_INODE_FD|RECURSE_DIR_TOPLEVEL,
@@ -313,28 +315,24 @@ int cg_set_access_recursive(
         return d.error;
 }
 
-int cg_migrate(
-                const char *from,
-                const char *to,
-                CGroupFlags flags) {
-
+int cg_migrate(int cgroupfs_fd, const char *source, const char *target, CGroupFlags flags) {
         _cleanup_set_free_ Set *s = NULL;
         bool done;
         int r, ret = 0;
 
-        assert(from);
-        assert(to);
+        assert(source);
+        assert(target);
 
         do {
                 _cleanup_fclose_ FILE *f = NULL;
-                pid_t pid;
 
                 done = true;
 
-                r = cg_enumerate_processes(SYSTEMD_CGROUP_CONTROLLER, from, &f);
+                r = cg_enumerate_processes(cgroupfs_fd, source, &f);
                 if (r < 0)
                         return RET_GATHER(ret, r);
 
+                pid_t pid;
                 while ((r = cg_read_pid(f, &pid, flags)) > 0) {
                         /* Throw an error if unmappable PIDs are in output, we can't migrate those. */
                         if (pid == 0)
@@ -351,7 +349,7 @@ int cg_migrate(
                         if (pid_is_kernel_thread(pid) > 0)
                                 continue;
 
-                        r = cg_attach(to, pid);
+                        r = cg_attach(cgroupfs_fd, target, pid);
                         if (r < 0) {
                                 if (r != -ESRCH)
                                         RET_GATHER(ret, r);
@@ -362,7 +360,7 @@ int cg_migrate(
 
                         r = set_ensure_put(&s, /* hash_ops = */ NULL, PID_TO_PTR(pid));
                         if (r < 0)
-                                return RET_GATHER(ret, r);
+                                return r;
                 }
                 if (r < 0)
                         return RET_GATHER(ret, r);
@@ -372,15 +370,14 @@ int cg_migrate(
 }
 
 int cg_enable(
+                int cgroupfs_fd,
+                const char *path,
                 CGroupMask supported,
                 CGroupMask mask,
-                const char *p,
                 CGroupMask *ret_result_mask) {
 
         _cleanup_fclose_ FILE *f = NULL;
-        _cleanup_free_ char *fs = NULL;
-        CGroupController c;
-        CGroupMask ret = 0;
+        _cleanup_free_ char *p = NULL;
         int r;
 
         assert(p);
@@ -391,70 +388,49 @@ int cg_enable(
                 return 0;
         }
 
-        r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, p, "cgroup.subtree_control", &fs);
+        r = cg_get_path(cgroupfs_fd, path, "cgroup.subtree_control", &p);
         if (r < 0)
                 return r;
 
-        for (c = 0; c < _CGROUP_CONTROLLER_MAX; c++) {
-                CGroupMask bit = CGROUP_CONTROLLER_TO_MASK(c);
-                const char *n;
+        r = xfopenat(cgroupfs_fd, p, "we", /* open_flags = */ 0, &f);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to open cgroup.subtree_control of '%s': %m", path);
 
-                if (!FLAGS_SET(CGROUP_MASK_V2, bit))
-                        continue;
+        CGroupMask enabled = 0;
 
-                if (!FLAGS_SET(supported, bit))
-                        continue;
+        BIT_FOREACH(controller, supported) {
+                bool enable = BIT_SET(mask, controller);
+                const char *n = ASSERT_PTR(cgroup_controller_to_string(controller)),
+                           *s = strjoina(plus_minus(enable), n);
 
-                n = cgroup_controller_to_string(c);
-                {
-                        char s[1 + strlen(n) + 1];
+                r = write_string_stream(f, s, WRITE_STRING_FILE_DISABLE_BUFFER);
+                if (r < 0) {
+                        log_debug_errno(r, "Failed to %s controller %s for cgroup '%s': %m",
+                                        enable ? "enable" : "disable", n, path);
+                        clearerr(f);
 
-                        s[0] = FLAGS_SET(mask, bit) ? '+' : '-';
-                        strcpy(s + 1, n);
+                        /* If we can't turn off a controller, leave it on in the reported resulting mask.
+                         * This happens for example when we attempt to turn off a controller up in the tree
+                         * that is used down in the tree.
+                         *
+                         * You might wonder why we check for EBUSY only here, and not follow the same logic
+                         * for other errors such as EINVAL or EOPNOTSUPP or anything else. That's because
+                         * EBUSY indicates that the controllers is currently enabled and cannot be disabled
+                         * because something down the hierarchy is still using it. Any other error most likely
+                         * means something like "I never heard of this controller" or similar.
+                         * In the former case it's hence safe to assume the controller is still on after
+                         * the failed operation, while in the latter case it's safer to assume the controller
+                         * is unknown and hence certainly not enabled. */
+                        if (!enable && r == -EBUSY)
+                                SET_BIT(enabled, controller);
 
-                        if (!f) {
-                                f = fopen(fs, "we");
-                                if (!f)
-                                        return log_debug_errno(errno, "Failed to open cgroup.subtree_control file of %s: %m", p);
-                        }
-
-                        r = write_string_stream(f, s, WRITE_STRING_FILE_DISABLE_BUFFER);
-                        if (r < 0) {
-                                log_debug_errno(r, "Failed to %s controller %s for %s (%s): %m",
-                                                FLAGS_SET(mask, bit) ? "enable" : "disable", n, p, fs);
-                                clearerr(f);
-
-                                /* If we can't turn off a controller, leave it on in the reported resulting mask. This
-                                 * happens for example when we attempt to turn off a controller up in the tree that is
-                                 * used down in the tree. */
-                                if (!FLAGS_SET(mask, bit) && r == -EBUSY) /* You might wonder why we check for EBUSY
-                                                                           * only here, and not follow the same logic
-                                                                           * for other errors such as EINVAL or
-                                                                           * EOPNOTSUPP or anything else. That's
-                                                                           * because EBUSY indicates that the
-                                                                           * controllers is currently enabled and
-                                                                           * cannot be disabled because something down
-                                                                           * the hierarchy is still using it. Any other
-                                                                           * error most likely means something like "I
-                                                                           * never heard of this controller" or
-                                                                           * similar. In the former case it's hence
-                                                                           * safe to assume the controller is still on
-                                                                           * after the failed operation, while in the
-                                                                           * latter case it's safer to assume the
-                                                                           * controller is unknown and hence certainly
-                                                                           * not enabled. */
-                                        ret |= bit;
-                        } else {
-                                /* Otherwise, if we managed to turn on a controller, set the bit reflecting that. */
-                                if (FLAGS_SET(mask, bit))
-                                        ret |= bit;
-                        }
-                }
+                } else if (enable) /* Otherwise, if we managed to turn on a controller, set the bit reflecting that. */
+                        SET_BIT(enabled, controller);
         }
 
         /* Let's return the precise set of controllers now enabled for the cgroup. */
         if (ret_result_mask)
-                *ret_result_mask = ret;
+                *ret_result_mask = enabled;
 
         return 0;
 }

@@ -372,7 +372,7 @@ TEST(mask_supported, .sd_booted = true) {
         for (CGroupController c = 0; c < _CGROUP_CONTROLLER_MAX; c++)
                 printf("'%s' is supported: %s\n",
                        cgroup_controller_to_string(c),
-                       yes_no(m & CGROUP_CONTROLLER_TO_MASK(c)));
+                       yes_no(m & INDEX_TO_MASK(c)));
 }
 
 TEST(cg_tests) {

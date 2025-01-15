@@ -58,7 +58,7 @@ static int property_get_cgroup_mask(
                 return r;
 
         for (CGroupController ctrl = 0; ctrl < _CGROUP_CONTROLLER_MAX; ctrl++) {
-                if ((*mask & CGROUP_CONTROLLER_TO_MASK(ctrl)) == 0)
+                if ((*mask & INDEX_TO_MASK(ctrl)) == 0)
                         continue;
 
                 r = sd_bus_message_append(reply, "s", cgroup_controller_to_string(ctrl));
@@ -544,7 +544,7 @@ static int bus_cgroup_set_transient_property(
                         if (cc < 0)
                                 return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Unknown cgroup controller '%s'", t);
 
-                        mask |= CGROUP_CONTROLLER_TO_MASK(cc);
+                        mask |= INDEX_TO_MASK(cc);
                 }
 
                 r = sd_bus_message_exit_container(message);
