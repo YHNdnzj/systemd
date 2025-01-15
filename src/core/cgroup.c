@@ -3101,7 +3101,7 @@ int unit_attach_pids_to_cgroup(Unit *u, Set *pids, const char *suffix_path) {
                  * innermost realized one */
 
                 for (CGroupController c = 0; c < _CGROUP_CONTROLLER_MAX; c++) {
-                        CGroupMask bit = CGROUP_CONTROLLER_TO_MASK(c);
+                        CGroupMask bit = INDEX_TO_MASK(c);
                         const char *realized;
 
                         if (!(u->manager->cgroup_supported & bit))
@@ -3917,19 +3917,12 @@ void unit_add_to_cgroup_empty_queue(Unit *u) {
 
         assert(u);
 
-        /* Note that there are four different ways how cgroup empty events reach us:
+        /* On the unified hierarchy we get an inotify event on the cgroup indicating it's empty.
          *
-         * 1. On the unified hierarchy we get an inotify event on the cgroup
-         *
-         * 2. On the legacy hierarchy, when running in system mode, we get a datagram on the cgroup agent socket
-         *
-         * 3. On the legacy hierarchy, when running in user mode, we get a D-Bus signal on the system bus
-         *
-         * 4. On the legacy hierarchy, in service units we start watching all processes of the cgroup for SIGCHLD as
-         *    soon as we get one SIGCHLD, to deal with unreliable cgroup notifications.
-         *
-         * Regardless which way we got the notification, we'll verify it here, and then add it to a separate
-         * queue. This queue will be dispatched at a lower priority than the SIGCHLD handler, so that we always use
+         * We'll additionally verify it again here, to prevent any potential races (e.g. unit_attach_pids_to_cgroup()
+         * removes queued cgroup empty event, but if the inotify is not yet dispatched when the new process
+         * is added, we might still end up with outdated empty event). And then add it to a separate
+         * queue, which will be dispatched at a lower priority than the SIGCHLD handler, so that we always use
          * SIGCHLD if we can get it first, and only use the cgroup empty notifications if there's no SIGCHLD pending
          * (which might happen if the cgroup doesn't contain processes that are our own child, which is typically the
          * case for scope units). */
@@ -3979,7 +3972,7 @@ int unit_check_oomd_kill(Unit *u) {
         if (r == 0)
                 return 0;
 
-        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_ooms", &value, /* ret_size= */ NULL);
+        r = cg_get_xattr(crt->cgroup_path, "user.oomd_ooms", &value, /* ret_size= */ NULL);
         if (r < 0 && !ERRNO_IS_XATTR_ABSENT(r))
                 return r;
 
@@ -3997,7 +3990,7 @@ int unit_check_oomd_kill(Unit *u) {
 
         n = 0;
         value = mfree(value);
-        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_kill", &value, /* ret_size= */ NULL);
+        r = cg_get_xattr(crt->cgroup_path, "user.oomd_kill", &value, /* ret_size= */ NULL);
         if (r >= 0 && !isempty(value))
                 (void) safe_atou64(value, &n);
 
@@ -4389,7 +4382,7 @@ int manager_setup_cgroup(Manager *m) {
         /* 10. Log which controllers are supported */
         for (CGroupController c = 0; c < _CGROUP_CONTROLLER_MAX; c++)
                 log_debug("Controller '%s' supported: %s", cgroup_controller_to_string(c),
-                          yes_no(m->cgroup_supported & CGROUP_CONTROLLER_TO_MASK(c)));
+                          yes_no(m->cgroup_supported & INDEX_TO_MASK(c)));
 
         return 0;
 }
@@ -4701,16 +4694,6 @@ static int unit_get_cpu_usage_raw(const Unit *u, const CGroupRuntime *crt, nsec_
         /* The root cgroup doesn't expose this information, let's get it from /proc instead */
         if (unit_has_host_root_cgroup(u))
                 return procfs_cpu_get_usage(ret);
-
-        /* Requisite controllers for CPU accounting are not enabled */
-        if ((get_cpu_accounting_mask() & ~crt->cgroup_realized_mask) != 0)
-                return -ENODATA;
-
-        r = cg_all_unified();
-        if (r < 0)
-                return r;
-        if (r == 0)
-                return cg_get_attribute_as_uint64("cpuacct", crt->cgroup_path, "cpuacct.usage", ret);
 
         _cleanup_free_ char *val = NULL;
         uint64_t us;

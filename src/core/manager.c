@@ -5131,8 +5131,8 @@ void unit_defaults_init(UnitDefaults *defaults, RuntimeScope scope) {
                 .start_limit = { DEFAULT_START_LIMIT_INTERVAL, DEFAULT_START_LIMIT_BURST },
 
                 /* On 4.15+ with unified hierarchy, CPU accounting is essentially free as it doesn't require the CPU
-                 * controller to be enabled, so the default is to enable it unless we got told otherwise. */
-                .cpu_accounting = cpu_accounting_is_cheap(),
+                 * controller to be enabled, so the default is to enable it. */
+                .cpu_accounting = true,
                 .memory_accounting = MEMORY_ACCOUNTING_DEFAULT,
                 .io_accounting = false,
                 .blockio_accounting = false,

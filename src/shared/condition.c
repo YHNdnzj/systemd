@@ -414,14 +414,11 @@ static int condition_test_control_group_controller(Condition *c, char **env) {
         assert(c->parameter);
         assert(c->type == CONDITION_CONTROL_GROUP_CONTROLLER);
 
+        /* Since v258 only v2 is supported */
         if (streq(c->parameter, "v2"))
-                return cg_all_unified();
-        if (streq(c->parameter, "v1")) {
-                r = cg_all_unified();
-                if (r < 0)
-                        return r;
-                return !r;
-        }
+                return true;
+        if (streq(c->parameter, "v1"))
+                return false;
 
         r = cg_mask_supported(&system_mask);
         if (r < 0)
