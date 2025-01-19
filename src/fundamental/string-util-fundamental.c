@@ -7,7 +7,7 @@
 #include "macro-fundamental.h"
 #include "string-util-fundamental.h"
 
-sd_char *startswith(const sd_char *s, const sd_char *prefix) {
+sd_char* startswith(const sd_char *s, const sd_char *prefix) {
         size_t l;
 
         assert(s);
@@ -20,7 +20,7 @@ sd_char *startswith(const sd_char *s, const sd_char *prefix) {
         return (sd_char*) s + l;
 }
 
-sd_char *startswith_no_case(const sd_char *s, const sd_char *prefix) {
+sd_char* startswith_no_case(const sd_char *s, const sd_char *prefix) {
         size_t l;
 
         assert(s);
@@ -33,25 +33,25 @@ sd_char *startswith_no_case(const sd_char *s, const sd_char *prefix) {
         return (sd_char*) s + l;
 }
 
-sd_char* endswith(const sd_char *s, const sd_char *suffix) {
-        size_t sl, pl;
+sd_char* endswith_n(const sd_char *s, size_t n, const sd_char *suffix) {
+        const char *e;
+        size_t sl;
 
-        assert(s);
+        assert(s || n == 0);
         assert(suffix);
 
-        sl = strlen(s);
-        pl = strlen(suffix);
+        sl = strlen(suffix);
+        if (sl == 0)
+                return (char*) s;
 
-        if (pl == 0)
-                return (sd_char*) s + sl;
-
-        if (sl < pl)
+        if (n < sl)
                 return NULL;
 
-        if (!streq(s + sl - pl, suffix))
+        e = s + n - sl;
+        if (memcmp(e, suffix, sl) != 0)
                 return NULL;
 
-        return (sd_char*) s + sl - pl;
+        return (sd_char*) e;
 }
 
 sd_char* endswith_no_case(const sd_char *s, const sd_char *suffix) {
