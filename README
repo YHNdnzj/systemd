@@ -53,7 +53,13 @@ REQUIREMENTS:
 
         Linux kernel ≥ 5.6 for getrandom() GRND_INSECURE
                      ≥ 5.7 for CLONE_INTO_CGROUP, cgroup2fs memory_recursiveprot option,
+<<<<<<< HEAD
                                BPF links and the BPF LSM hook
+||||||| parent of 4b55500f27 (wip2)
+                     ≥ 5.7 for CLONE_INTO_CGROUP, BPF links and the BPF LSM hook
+=======
+                           and BPF links and the BPF LSM hook
+>>>>>>> 4b55500f27 (wip2)
 
         ⚠️ Kernel versions below 5.7 ("recommended baseline") have significant gaps
            in functionality and are not recommended for use with this version
