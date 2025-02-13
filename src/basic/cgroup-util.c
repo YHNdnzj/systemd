@@ -118,6 +118,28 @@ int cg_get_cgroupid_at(int dfd, const char *path, uint64_t *ret) {
         return 0;
 }
 
+int cg_get_owner(int cgroupfs_fd, const char *path, uid_t *ret_uid) {
+        _cleanup_free_ char *f = NULL;
+        struct stat stats;
+        int r;
+
+        assert(ret_uid);
+
+        r = cg_get_path(cgroupfs_fd, path, /* suffix = */ NULL, &f);
+        if (r < 0)
+                return r;
+
+        if (fstatat(cgroupfs_fd, f, &stats, /* flags = */ 0) < 0)
+                return -errno;
+
+        r = stat_verify_directory(&stats);
+        if (r < 0)
+                return r;
+
+        *ret_uid = stats.st_uid;
+        return 0;
+}
+
 int cg_enumerate_processes(int cgroupfs_fd, const char *path, FILE **ret) {
         _cleanup_free_ char *fs = NULL;
         int r;
@@ -196,6 +218,19 @@ int cg_read_pidref(FILE *f, PidRef *ret, CGroupFlags flags) {
         }
 }
 
+bool cg_kill_supported(void) {
+        static thread_local int supported = -1;
+
+        if (supported >= 0)
+                return supported;
+
+        if (access("/sys/fs/cgroup/init.scope/cgroup.kill", F_OK) >= 0)
+                return (supported = true);
+        if (errno != ENOENT)
+                log_debug_errno(errno, "Failed to check whether cgroup.kill is available, assuming not: %m");
+        return (supported = false);
+}
+
 int cg_read_event(
                 int cgroupfs_fd,
                 const char *path,
@@ -233,19 +268,6 @@ int cg_read_event(
                 if (streq(key, event))
                         return strdup_to(ret, q);
         }
-}
-
-bool cg_kill_supported(void) {
-        static thread_local int supported = -1;
-
-        if (supported >= 0)
-                return supported;
-
-        if (access("/sys/fs/cgroup/init.scope/cgroup.kill", F_OK) >= 0)
-                return (supported = true);
-        if (errno != ENOENT)
-                log_debug_errno(errno, "Failed to check whether cgroup.kill is available, assuming not: %m");
-        return (supported = false);
 }
 
 int cg_enumerate_subgroups(int cgroupfs_fd, const char *path, DIR **ret) {
@@ -621,6 +643,7 @@ int cg_is_empty_recursive(int cgroupfs_fd, const char *path) {
         if (empty_or_root(path))
                 return false;
 
+        // TODO: port to keyed attr
         r = cg_read_event(cgroupfs_fd, path, "populated", &t);
         if (r == -ENOENT)
                 return true;
@@ -630,70 +653,9 @@ int cg_is_empty_recursive(int cgroupfs_fd, const char *path) {
         return streq(t, "0");
 }
 
-int cg_split_spec(const char *spec, char **ret_controller, char **ret_path) {
-        _cleanup_free_ char *controller = NULL, *path = NULL;
-        int r;
-
-        assert(spec);
-
-        // TODO: what is this???
-        if (*spec == '/') {
-                if (!path_is_normalized(spec))
-                        return -EINVAL;
-
-                if (ret_path) {
-                        r = path_simplify_alloc(spec, &path);
-                        if (r < 0)
-                                return r;
-                }
-
-        } else {
-                const char *e;
-
-                e = strchr(spec, ':');
-                if (e) {
-                        controller = strndup(spec, e-spec);
-                        if (!controller)
-                                return -ENOMEM;
-                        if (!cg_controller_is_valid(controller))
-                                return -EINVAL;
-
-                        if (!isempty(e + 1)) {
-                                path = strdup(e+1);
-                                if (!path)
-                                        return -ENOMEM;
-
-                                if (!path_is_normalized(path) ||
-                                    !path_is_absolute(path))
-                                        return -EINVAL;
-
-                                path_simplify(path);
-                        }
-
-                } else {
-                        if (!cg_controller_is_valid(spec))
-                                return -EINVAL;
-
-                        if (ret_controller) {
-                                controller = strdup(spec);
-                                if (!controller)
-                                        return -ENOMEM;
-                        }
-                }
-        }
-
-        if (ret_controller)
-                *ret_controller = TAKE_PTR(controller);
-        if (ret_path)
-                *ret_path = TAKE_PTR(path);
-        return 0;
-}
-
 int cg_mangle_path(const char *path, char **ret) {
-        _cleanup_free_ char *c = NULL, *p = NULL;
         int r;
 
-        // See TODO above ???
         assert(path);
         assert(ret);
 
@@ -701,12 +663,10 @@ int cg_mangle_path(const char *path, char **ret) {
         if (path_startswith(path, "/sys/fs/cgroup"))
                 return path_simplify_alloc(path, ret);
 
-        /* Otherwise, treat it as cg spec */
-        r = cg_split_spec(path, &c, &p);
-        if (r < 0)
-                return r;
+        if (!path_is_absolute(path) || !path_is_normalized(path))
+                return -EINVAL;
 
-        return cg_get_path(c ?: SYSTEMD_CGROUP_CONTROLLER, p ?: "/", NULL, ret);
+        return cg_get_path(/* cgroupfs_fd = */ -EBADF, path, /* suffix = */ NULL, ret);
 }
 
 int cg_get_root_path(char **ret) {
@@ -1436,28 +1396,32 @@ int cg_set_attribute(int cgroupfs_fd, const char *path, const char *attribute, c
         if (r < 0)
                 return r;
 
-        return write_string_file(p, value, WRITE_STRING_FILE_DISABLE_BUFFER);
+        return write_string_file_at(cgroupfs_fd, p, value, WRITE_STRING_FILE_DISABLE_BUFFER);
 }
 
-int cg_get_attribute(const char *controller, const char *path, const char *attribute, char **ret) {
+int cg_get_attribute(int cgroupfs_fd, const char *path, const char *attribute, char **ret) {
         _cleanup_free_ char *p = NULL;
         int r;
 
-        r = cg_get_path(controller, path, attribute, &p);
+        assert(attribute);
+        assert(ret);
+
+        r = cg_get_path(cgroupfs_fd, path, attribute, &p);
         if (r < 0)
                 return r;
 
-        return read_one_line_file(p, ret);
+        return read_one_line_file_at(cgroupfs_fd, p, ret);
 }
 
-int cg_get_attribute_as_uint64(const char *controller, const char *path, const char *attribute, uint64_t *ret) {
+int cg_get_attribute_uint64(int cgroupfs_fd, const char *path, const char *attribute, uint64_t *ret) {
         _cleanup_free_ char *value = NULL;
         uint64_t v;
         int r;
 
+        assert(attribute);
         assert(ret);
 
-        r = cg_get_attribute(controller, path, attribute, &value);
+        r = cg_get_attribute(cgroupfs_fd, path, attribute, &value);
         if (r == -ENOENT)
                 return -ENODATA;
         if (r < 0)
@@ -1476,60 +1440,30 @@ int cg_get_attribute_as_uint64(const char *controller, const char *path, const c
         return 0;
 }
 
-int cg_get_attribute_as_bool(const char *controller, const char *path, const char *attribute, bool *ret) {
+int cg_get_attribute_bool(int cgroupfs_fd, const char *path, const char *attribute) {
         _cleanup_free_ char *value = NULL;
         int r;
 
-        assert(ret);
+        assert(attribute);
 
-        r = cg_get_attribute(controller, path, attribute, &value);
+        r = cg_get_attribute(cgroupfs_fd, path, attribute, &value);
         if (r == -ENOENT)
                 return -ENODATA;
         if (r < 0)
                 return r;
 
-        r = parse_boolean(value);
-        if (r < 0)
-                return r;
-
-        *ret = r;
-        return 0;
-}
-
-int cg_get_owner(const char *path, uid_t *ret_uid) {
-        _cleanup_free_ char *f = NULL;
-        struct stat stats;
-        int r;
-
-        assert(ret_uid);
-
-        r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, path, NULL, &f);
-        if (r < 0)
-                return r;
-
-        if (stat(f, &stats) < 0)
-                return -errno;
-
-        r = stat_verify_directory(&stats);
-        if (r < 0)
-                return r;
-
-        *ret_uid = stats.st_uid;
-        return 0;
+        return parse_boolean(value);
 }
 
 int cg_get_keyed_attribute_full(
-                const char *controller,
+                int cgroupfs_fd,
                 const char *path,
                 const char *attribute,
-                char **keys,
+                char * const *keys,
                 char **ret_values,
-                CGroupKeyMode mode) {
+                CGroupKeyMode flags) {
 
-        _cleanup_free_ char *filename = NULL, *contents = NULL;
-        const char *p;
-        size_t n, i, n_done = 0;
-        char **v;
+        _cleanup_free_ char *attr_path = NULL, *contents = NULL;
         int r;
 
         /* Reads one or more fields of a cgroup v2 keyed attribute file. The 'keys' parameter should be an strv with
@@ -1539,67 +1473,50 @@ int cg_get_keyed_attribute_full(
          * If the attribute file doesn't exist at all returns ENOENT, if any key is not found returns ENXIO. If mode
          * is set to GG_KEY_MODE_GRACEFUL we ignore missing keys and return those that were parsed successfully. */
 
-        r = cg_get_path(controller, path, attribute, &filename);
+        r = cg_get_path(cgroupfs_fd, path, attribute, &attr_path);
         if (r < 0)
                 return r;
 
-        r = read_full_file(filename, &contents, NULL);
+        r = read_full_file_at(cgroupfs_fd, attr_path, &contents, NULL);
         if (r < 0)
                 return r;
+
+        size_t n, n_done = 0;
 
         n = strv_length(keys);
         if (n == 0) /* No keys to retrieve? That's easy, we are done then */
                 return 0;
 
         /* Let's build this up in a temporary array for now in order not to clobber the return parameter on failure */
-        v = newa0(char*, n);
+        char **v = newa(char*, n);
 
-        for (p = contents; *p;) {
-                const char *w = NULL;
-
-                for (i = 0; i < n; i++)
-                        if (!v[i]) {
-                                w = first_word(p, keys[i]);
-                                if (w)
-                                        break;
+        // TODO: test and commit msg: the behavior has been adjusted to permit duplicate keys
+        for (size_t i = 0; i < n; i++) {
+                const char *p = find_line_startswith(contents, keys[i]);
+                if (!p) {
+                        if (FLAGS_SET(flags, CG_KEY_MODE_GRACEFUL)) {
+                                v[i] = NULL;
+                                continue;
                         }
 
-                if (w) {
-                        size_t l;
+                        r = -ENXIO;
+                        goto fail;
+                }
 
-                        l = strcspn(w, NEWLINE);
-                        v[i] = strndup(w, l);
-                        if (!v[i]) {
-                                r = -ENOMEM;
-                                goto fail;
-                        }
-
-                        n_done++;
-                        if (n_done >= n)
-                                goto done;
-
-                        p = w + l;
-                } else
-                        p += strcspn(p, NEWLINE);
-
-                p += strspn(p, NEWLINE);
+                p = skip_leading_chars(p, /* bad = */ NULL);
+                v[i] = strndup(p, strcspn(p, NEWLINE));
+                if (!v[i]) {
+                        r = -ENOMEM;
+                        goto fail;
+                }
         }
 
-        if (mode & CG_KEY_MODE_GRACEFUL)
-                goto done;
-
-        r = -ENXIO;
+        memcpy(ret_values, v, sizeof(char*) * n);
+        return 0;
 
 fail:
         free_many_charp(v, n);
         return r;
-
-done:
-        memcpy(ret_values, v, sizeof(char*) * n);
-        if (mode & CG_KEY_MODE_GRACEFUL)
-                return n_done;
-
-        return 0;
 }
 
 int cg_mask_to_string(CGroupMask mask, char **ret) {
@@ -1607,14 +1524,9 @@ int cg_mask_to_string(CGroupMask mask, char **ret) {
 
         assert(ret);
 
-        BIT_FOREACH(c, mask) {
-                const char *k;
-                size_t l;
-
+        BIT_FOREACH(c, mask)
                 if (!strextend_with_separator(&s, " ", cgroup_controller_to_string(c)))
                         return -ENOMEM;
-
-        }
 
         *ret = TAKE_PTR(s);
         return 0;
@@ -1623,8 +1535,8 @@ int cg_mask_to_string(CGroupMask mask, char **ret) {
 int cg_mask_from_string(const char *value, CGroupMask *ret) {
         CGroupMask m = 0;
 
-        assert(ret);
         assert(value);
+        assert(ret);
 
         for (;;) {
                 _cleanup_free_ char *n = NULL;
@@ -1648,20 +1560,17 @@ int cg_mask_from_string(const char *value, CGroupMask *ret) {
         return 0;
 }
 
-int cg_mask_supported_subtree(const char *root, CGroupMask *ret) {
-        CGroupMask mask;
+int cg_mask_supported_subtree(int cgroupfs_fd, const char *root, CGroupMask *ret) {
+        _cleanup_free_ char *path = NULL, *controllers = NULL;
         int r;
 
         /* Determines the mask of supported cgroup controllers. Only includes controllers we can make sense of and that
          * are actually accessible. Only covers real controllers, i.e. not the CGROUP_CONTROLLER_BPF_xyz
          * pseudo-controllers. */
 
-        _cleanup_free_ char *controllers = NULL, *path = NULL;
+        assert(root);
 
-        /* In the unified hierarchy we can read the supported and accessible controllers from
-         * the top-level cgroup attribute */
-
-        r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, root, "cgroup.controllers", &path);
+        r = cg_get_path(cgroupfs_fd, root, "cgroup.controllers", &path);
         if (r < 0)
                 return r;
 
@@ -1669,12 +1578,7 @@ int cg_mask_supported_subtree(const char *root, CGroupMask *ret) {
         if (r < 0)
                 return r;
 
-        r = cg_mask_from_string(controllers, &mask);
-        if (r < 0)
-                return r;
-
-        *ret = mask;
-        return 0;
+        return cg_mask_from_string(controllers, ret);
 }
 
 int cg_mask_supported(CGroupMask *ret) {
@@ -1685,7 +1589,7 @@ int cg_mask_supported(CGroupMask *ret) {
         if (r < 0)
                 return r;
 
-        return cg_mask_supported_subtree(root, ret);
+        return cg_mask_supported_subtree(/* cgroupfs_fd = */ -EBADF, root, ret);
 }
 
 int cg_is_delegated(const char *path) {
@@ -1699,7 +1603,7 @@ int cg_is_delegated(const char *path) {
 
         /* If the trusted xattr isn't set (preferred), then check the untrusted one. Under the assumption
          * that whoever is trusted enough to own the cgroup, is also trusted enough to decide if it is
-         * delegated or not this should be safe. */
+         * delegated or not this should be safe (see also comments in cgroup_delegate_xattr_apply()) . */
         r = cg_get_xattr_bool(path, "user.delegate");
         return ERRNO_IS_NEG_XATTR_ABSENT(r) ? false : r;
 }
@@ -1717,12 +1621,12 @@ int cg_is_delegated_fd(int fd) {
         return ERRNO_IS_NEG_XATTR_ABSENT(r) ? false : r;
 }
 
-int cg_has_coredump_receive(const char *path) {
+int cg_has_coredump_receive(int cgroupfs_fd, const char *path) {
         int r;
 
         assert(path);
 
-        r = cg_get_xattr_bool(path, "user.coredump_receive");
+        r = cg_get_xattr_bool(cgroupfs_fd, path, "user.coredump_receive");
         if (ERRNO_IS_NEG_XATTR_ABSENT(r))
                 return false;
 
@@ -1787,10 +1691,8 @@ DEFINE_STRING_TABLE_LOOKUP(cgroup_io_limit_type, CGroupIOLimitType);
 
 static const char *const cgroup_controller_table[_CGROUP_CONTROLLER_MAX] = {
         [CGROUP_CONTROLLER_CPU] = "cpu",
-        [CGROUP_CONTROLLER_CPUACCT] = "cpuacct",
         [CGROUP_CONTROLLER_CPUSET] = "cpuset",
         [CGROUP_CONTROLLER_IO] = "io",
-        [CGROUP_CONTROLLER_BLKIO] = "blkio",
         [CGROUP_CONTROLLER_MEMORY] = "memory",
         [CGROUP_CONTROLLER_DEVICES] = "devices",
         [CGROUP_CONTROLLER_PIDS] = "pids",

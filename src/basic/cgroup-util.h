@@ -162,8 +162,11 @@ typedef enum {
         CG_KEY_MODE_GRACEFUL = 1 << 0,
 } CGroupKeyMode;
 
-int cg_set_attribute(const char *controller, const char *path, const char *attribute, const char *value);
-int cg_get_attribute(const char *controller, const char *path, const char *attribute, char **ret);
+int cg_set_attribute(int cgroupfs_fd, const char *path, const char *attribute, const char *value);
+int cg_get_attribute(int cgroupfs_fd, const char *path, const char *attribute, char **ret);
+int cg_get_attribute_uint64(const char *controller, const char *path, const char *attribute, uint64_t *ret);
+int cg_get_attribute_bool(const char *controller, const char *path, const char *attribute);
+
 int cg_get_keyed_attribute_full(const char *controller, const char *path, const char *attribute, char **keys, char **values, CGroupKeyMode mode);
 
 static inline int cg_get_keyed_attribute(
@@ -183,11 +186,6 @@ static inline int cg_get_keyed_attribute_graceful(
                 char **ret_values) {
         return cg_get_keyed_attribute_full(controller, path, attribute, keys, ret_values, CG_KEY_MODE_GRACEFUL);
 }
-
-int cg_get_attribute_as_uint64(const char *controller, const char *path, const char *attribute, uint64_t *ret);
-
-/* Does a parse_boolean() on the attribute contents and sets ret accordingly */
-int cg_get_attribute_as_bool(const char *controller, const char *path, const char *attribute, bool *ret);
 
 int cg_get_owner(const char *path, uid_t *ret_uid);
 

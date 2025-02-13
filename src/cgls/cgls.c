@@ -260,22 +260,13 @@ static int run(int argc, char *argv[]) {
                                                 return log_error_errno(r, "Failed to list cgroup tree: %m");
                                 }
 
-                                q = cg_split_spec(*name, &c, &p);
-                                if (q < 0) {
-                                        log_error_errno(q, "Failed to split argument %s: %m", *name);
-                                        goto failed;
-                                }
+                                // TODO
+                                j = path_join(root, p);
+                                if (!j)
+                                        return log_oom();
 
-                                controller = c ?: SYSTEMD_CGROUP_CONTROLLER;
-                                if (p) {
-                                        j = path_join(root, p);
-                                        if (!j)
-                                                return log_oom();
-
-                                        path_simplify(j);
-                                        path = j;
-                                } else
-                                        path = root;
+                                path_simplify(j);
+                                path = j;
 
                                 show_cg_info(controller, path);
 
