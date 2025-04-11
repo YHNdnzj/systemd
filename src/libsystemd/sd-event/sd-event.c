@@ -1978,8 +1978,7 @@ _public_ int sd_event_add_memory_pressure(
 
                 /* By default we want to watch memory pressure on the local cgroup, but we'll fall back on
                  * the system wide pressure if for some reason we cannot (which could be: memory controller
-                 * not delegated to us, or PSI simply not available in the kernel). On legacy cgroupv1 we'll
-                 * only use the system-wide logic. */
+                 * not delegated to us, or PSI simply not available in the kernel). */
                 r = cg_all_unified();
                 if (r < 0)
                         return r;
@@ -1992,6 +1991,7 @@ _public_ int sd_event_add_memory_pressure(
                         if (r < 0)
                                 return r;
 
+                        // FIXME: use cg_get_path
                         w = path_join("/sys/fs/cgroup", cg, "memory.pressure");
                         if (!w)
                                 return -ENOMEM;
