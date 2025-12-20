@@ -1899,8 +1899,6 @@ int namespace_fork_full(
 
         _cleanup_(pidref_done_sigkill_wait) PidRef pidref_outer = PIDREF_NULL;
         _cleanup_close_pair_ int errno_pipe_fd[2] = EBADF_PAIR;
-        sigset_t ss, saved_ss;
-        _cleanup_(block_signals_reset) sigset_t *saved_ssp = NULL;
         int r, prio = FLAGS_SET(flags, FORK_LOG) ? LOG_ERR : LOG_DEBUG;
 
         /* This is much like safe_fork(), but forks twice, and joins the specified namespaces in the middle
@@ -1916,21 +1914,23 @@ int namespace_fork_full(
         assert((flags & (FORK_DETACH|FORK_FREEZE)) == 0);
         assert(!FLAGS_SET(flags, FORK_ALLOW_DLOPEN)); /* never allow loading shared library from another ns */
 
-        assert_se(sigemptyset(&ss) >= 0);
-        assert_se(sigaddset(&ss, SIGCHLD) >= 0);
-
-        if (sigprocmask(SIG_BLOCK, &ss, &saved_ss) < 0)
-                return log_full_errno(prio, errno, "Failed to block SIGCHLD: %m");
-        saved_ssp = &saved_ss;
-
+        /* We want read() to block as a synchronization point */
+        assset_cc(sizeof(int) <= PIPE_BUF);
         if (pipe2(errno_pipe_fd, O_CLOEXEC) < 0)
                 return log_full_errno(prio, errno, "Failed to create pipe: %m");
 
         r = pidref_safe_fork_full(
                         outer_name,
                         /* stdio_fds = */ NULL, /* except_fds = */ NULL, /* n_except_fds = */ 0,
-                        (flags|FORK_DEATHSIG_SIGKILL) & ~(FORK_DEATHSIG_SIGTERM|FORK_DEATHSIG_SIGINT|FORK_REOPEN_LOG|FORK_NEW_MOUNTNS|FORK_MOUNTNS_SLAVE|FORK_NEW_USERNS|FORK_NEW_NETNS|FORK_NEW_PIDNS|FORK_CLOSE_ALL_FDS|FORK_PACK_FDS|FORK_CLOEXEC_OFF|FORK_WAIT),
+                        (flags|FORK_DEATHSIG_SIGKILL) & ~(FORK_DEATHSIG_SIGTERM|FORK_DEATHSIG_SIGINT|FORK_REOPEN_LOG|FORK_NEW_MOUNTNS|FORK_MOUNTNS_SLAVE|FORK_NEW_USERNS|FORK_NEW_NETNS|FORK_NEW_PIDNS|FORK_CLOSE_ALL_FDS|FORK_PACK_FDS|FORK_CLOEXEC_OFF),
                         &pidref_outer);
+        if (r == -EPROTO && FLAGS_SET(flags, FORK_WAIT)) {
+                errno_pipe_fd[1] = safe_close(errno_pipe_fd[1]);
+
+                int k = read_errno(errno_pipe_fd[0]);
+                if (k < 0 && k != -EIO)
+                        return k;
+        }
         if (r < 0)
                 return r;
         if (r == 0) {
@@ -1939,9 +1939,6 @@ int namespace_fork_full(
                 /* Child */
 
                 errno_pipe_fd[0] = safe_close(errno_pipe_fd[0]);
-
-                if (FLAGS_SET(flags, FORK_RESET_SIGNALS))
-                        saved_ssp = NULL;
 
                 r = namespace_enter(pidns_fd, mntns_fd, netns_fd, userns_fd, root_fd);
                 if (r < 0) {
@@ -1994,20 +1991,6 @@ int namespace_fork_full(
         r = read_errno(errno_pipe_fd[0]);
         if (r < 0)
                 return r; /* the child logs about failures on its own, no need to duplicate here */
-
-        if (FLAGS_SET(flags, FORK_WAIT)) {
-                r = pidref_wait_for_terminate_and_check(
-                                outer_name,
-                                &pidref_outer,
-                                FLAGS_SET(flags, FORK_LOG) ? WAIT_LOG : 0);
-                if (r < 0)
-                        return r;
-
-                pidref_done(&pidref_outer);
-
-                if (r != EXIT_SUCCESS)
-                        return -EPROTO;
-        }
 
         if (ret)
                 *ret = TAKE_PIDREF(pidref_outer);
