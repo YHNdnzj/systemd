@@ -208,24 +208,23 @@ int path_get_mnt_id_at(int dir_fd, const char *path, int *ret) {
         struct statx sx;
         int r;
 
-        assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
+        /* Returns > 0 if mount id has guarantee for uniqueness */
+
+        assert(dir_fd >= 0 || IN_SET(dir_fd, AT_FDCWD, XAT_FDROOT));
         assert(ret);
 
-        if (statx(dir_fd,
-                  strempty(path),
-                  (isempty(path) ? AT_EMPTY_PATH : AT_SYMLINK_NOFOLLOW) |
-                  AT_NO_AUTOMOUNT |    /* don't trigger automounts, mnt_id is a local concept */
-                  AT_STATX_DONT_SYNC,  /* don't go to the network, mnt_id is a local concept */
-                  STATX_MNT_ID,
-                  &sx) < 0)
-                return -errno;
-
-        r = statx_warn_mount_id(&sx, LOG_DEBUG);
+        r = xstatx(dir_fd, path,
+                   AT_SYMLINK_NOFOLLOW |
+                   AT_NO_AUTOMOUNT |    /* don't trigger automounts, mnt_id is a local concept */
+                   AT_STATX_DONT_SYNC,  /* don't go to the network, mnt_id is a local concept */
+                   STATX_MNT_ID,
+                   STATX_MNT_ID_UNIQUE,
+                   &sx);
         if (r < 0)
                 return r;
 
         *ret = sx.stx_mnt_id;
-        return 0;
+        return r;
 }
 
 bool fstype_is_network(const char *fstype) {
