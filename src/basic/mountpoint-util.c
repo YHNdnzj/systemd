@@ -246,31 +246,24 @@ struct file_handle* file_handle_dup(const struct file_handle *fh) {
 int is_mount_point_at(int dir_fd, const char *path, int flags) {
         int r;
 
-        assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
+        assert(dir_fd >= 0 || IN_SET(dir_fd, AT_FDCWD, XAT_FDROOT));
         assert((flags & ~AT_SYMLINK_FOLLOW) == 0);
 
         if (path_equal(path, "/"))
                 return true;
 
-        if (isempty(path)) {
-                if (dir_fd == AT_FDCWD)
-                        path = ".";
-                else {
-                        flags |= AT_EMPTY_PATH;
-                        path = "";
-                }
-        }
+        if (dir_fd == XAT_FDROOT && isempty(path))
+                return true;
 
-        struct statx sx = {}; /* explicitly initialize the struct to make msan silent. */
-        if (statx(dir_fd, path,
-                  at_flags_normalize_nofollow(flags) |
-                  AT_NO_AUTOMOUNT |            /* don't trigger automounts – mounts are a local concept, hence no need to trigger automounts to determine STATX_ATTR_MOUNT_ROOT */
-                  AT_STATX_DONT_SYNC,          /* don't go to the network for this – for similar reasons */
-                  STATX_TYPE|STATX_INO,
-                  &sx) < 0)
-                return -errno;
-
-        r = statx_warn_mount_root(&sx, LOG_DEBUG);
+        struct statx sx;
+        r = xstatx_full(dir_fd, path,
+                        at_flags_normalize_nofollow(flags) |
+                        AT_NO_AUTOMOUNT |            /* don't trigger automounts – mounts are a local concept, hence no need to trigger automounts to determine STATX_ATTR_MOUNT_ROOT */
+                        AT_STATX_DONT_SYNC,          /* don't go to the network for this – for similar reasons */
+                        STATX_TYPE|STATX_INO,
+                        /* optional_mask = */ 0,
+                        STATX_ATTR_MOUNT_ROOT,
+                        &sx);
         if (r < 0)
                 return r;
 
@@ -311,19 +304,15 @@ int path_get_mnt_id_at(int dir_fd, const char *path, int *ret) {
         struct statx sx;
         int r;
 
-        assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
+        assert(dir_fd >= 0 || IN_SET(dir_fd, AT_FDCWD, XAT_FDROOT));
         assert(ret);
 
-        if (statx(dir_fd,
-                  strempty(path),
-                  (isempty(path) ? AT_EMPTY_PATH : AT_SYMLINK_NOFOLLOW) |
-                  AT_NO_AUTOMOUNT |    /* don't trigger automounts, mnt_id is a local concept */
-                  AT_STATX_DONT_SYNC,  /* don't go to the network, mnt_id is a local concept */
-                  STATX_MNT_ID,
-                  &sx) < 0)
-                return -errno;
-
-        r = statx_warn_mount_id(&sx, LOG_DEBUG);
+        r = xstatx(dir_fd, path,
+                   AT_SYMLINK_NOFOLLOW |
+                   AT_NO_AUTOMOUNT |    /* don't trigger automounts, mnt_id is a local concept */
+                   AT_STATX_DONT_SYNC,  /* don't go to the network, mnt_id is a local concept */
+                   STATX_MNT_ID,
+                   &sx);
         if (r < 0)
                 return r;
 
