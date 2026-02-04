@@ -586,7 +586,10 @@ static int opendir_and_stat(
                 return 0;
         }
 
-        if (statx(dirfd(d), "", AT_EMPTY_PATH, STATX_MODE|STATX_INO|STATX_ATIME|STATX_MTIME, &sx) < 0)
+        r = xstatx_full(dirfd(d), /* path = */ NULL, AT_EMPTY_PATH,
+                        STATX_MODE|STATX_INO|STATX_ATIME|STATX_MTIME,
+
+                   &sx);
                 return log_error_errno(errno, "statx(%s) failed: %m", path);
 
         r = statx_warn_mount_root(&sx, LOG_ERR);
