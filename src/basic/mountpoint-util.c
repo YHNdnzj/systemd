@@ -300,7 +300,7 @@ int path_is_mount_point_full(const char *path, const char *root, int flags) {
         return is_mount_point_at(dir_fd, /* path= */ NULL, flags);
 }
 
-int path_get_mnt_id_at(int dir_fd, const char *path, int *ret) {
+static int path_get_mnt_id_at_internal(int dir_fd, const char *path, bool unique, uint64_t *ret) {
         struct statx sx;
         int r;
 
@@ -311,7 +311,7 @@ int path_get_mnt_id_at(int dir_fd, const char *path, int *ret) {
                    AT_SYMLINK_NOFOLLOW |
                    AT_NO_AUTOMOUNT |    /* don't trigger automounts, mnt_id is a local concept */
                    AT_STATX_DONT_SYNC,  /* don't go to the network, mnt_id is a local concept */
-                   STATX_MNT_ID,
+                   unique ? STATX_MNT_ID_UNIQUE : STATX_MNT_ID,
                    &sx);
         if (r < 0)
                 return r;
@@ -320,26 +320,21 @@ int path_get_mnt_id_at(int dir_fd, const char *path, int *ret) {
         return 0;
 }
 
-int path_get_unique_mnt_id_at(int dir_fd, const char *path, uint64_t *ret) {
-        struct statx sx;
+int path_get_mnt_id_at_internal(int dir_fd, const char *path, int *ret) {
+        uint64_t mnt_id;
+        int r;
 
-        assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
-        assert(ret);
+        r = path_get_mnt_id_at_internal(dir_fd, path, false, &mnt_id);
+        if (r < 0)
+                return r;
 
-        if (statx(dir_fd,
-                  strempty(path),
-                  (isempty(path) ? AT_EMPTY_PATH : AT_SYMLINK_NOFOLLOW) |
-                  AT_NO_AUTOMOUNT |    /* don't trigger automounts, mnt_id is a local concept */
-                  AT_STATX_DONT_SYNC,  /* don't go to the network, mnt_id is a local concept */
-                  STATX_MNT_ID_UNIQUE,
-                  &sx) < 0)
-                return -errno;
-
-        if (!FLAGS_SET(sx.stx_mask, STATX_MNT_ID_UNIQUE))
-                return -EOPNOTSUPP;
-
-        *ret = sx.stx_mnt_id;
+        assert(mnt_id <= INT_MAX);
+        *ret = (int) mnt_id;
         return 0;
+}
+
+int path_get_unique_mnt_id_at(int dir_fd, const char *path, uint64_t *ret) {
+        return path_get_mnt_id_at_internal(dir_fd, path, true, ret);
 }
 
 bool fstype_is_network(const char *fstype) {
