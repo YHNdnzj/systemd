@@ -4274,16 +4274,34 @@ out:
         return r;
 }
 
-static void append_socket_pair(int *array, size_t *n, const int pair[static 2]) {
-        assert(array);
-        assert(n);
-        assert(pair);
+#define _append_one_fd_condition(array, n, cond, fd)            \
+        if (cond) {                                             \
+                int _fd_ = (fd);                                \
+                if (_fd_ >= 0)                                  \
+                        (array)[(n)++] = _fd_;                  \
+        }
 
-        if (pair[0] >= 0)
-                array[(*n)++] = pair[0];
-        if (pair[1] >= 0)
-                array[(*n)++] = pair[1];
-}
+#if BUILD_MODE_DEVELOPER
+static size_t n_total_fds = 0;
+
+#define append_one_fd_condition(array, n, cond, fd)             \
+        ({                                                      \
+                _append_one_fd_condition(array, n, cond, fd);   \
+                n_total_fds++;                                  \
+        })
+#else
+#define append_one_fd_condition _append_one_fd_condition
+#endif
+
+#define append_one_fd append_one_fd_condition(array, n, true, fd)
+
+#define append_socket_pair(array, n, cond, pair)                \
+        if (cond) {                                             \
+                int *_fds_ = (array), _pair_[2] = (pair);       \
+                size_t *_n_ = &(n);                             \
+                append_one_fd(_fds_, *_n_, _pair_[0]);          \
+                append_one_fd(_fds_, *_n_, _pair_[1]);          \
+        }
 
 static int close_remaining_fds(
                 const ExecParameters *params,
@@ -4292,33 +4310,23 @@ static int close_remaining_fds(
                 const int *fds,
                 size_t n_fds) {
 
+        int dont_close[n_fds + 19];
         size_t n_dont_close = 0;
-        int dont_close[n_fds + 17];
 
         assert(params);
         assert(runtime);
 
-        if (params->stdin_fd >= 0)
-                dont_close[n_dont_close++] = params->stdin_fd;
-        if (params->stdout_fd >= 0)
-                dont_close[n_dont_close++] = params->stdout_fd;
-        if (params->stderr_fd >= 0)
-                dont_close[n_dont_close++] = params->stderr_fd;
+        append_one_fd(dont_close, n_dont_close, params->stdin_fd);
+        append_one_fd(dont_close, n_dont_close, params->stdout_fd);
+        append_one_fd(dont_close, n_dont_close, params->stderr_fd);
 
-        if (socket_fd >= 0)
-                dont_close[n_dont_close++] = socket_fd;
-        if (n_fds > 0) {
-                memcpy(dont_close + n_dont_close, fds, sizeof(int) * n_fds);
-                n_dont_close += n_fds;
-        }
+        append_one_fd(dont_close, n_dont_close, socket_fd);
 
         append_socket_pair(dont_close, &n_dont_close, runtime->ephemeral_storage_socket);
 
-        if (runtime->shared) {
-                append_socket_pair(dont_close, &n_dont_close, runtime->shared->userns_storage_socket);
-                append_socket_pair(dont_close, &n_dont_close, runtime->shared->netns_storage_socket);
-                append_socket_pair(dont_close, &n_dont_close, runtime->shared->ipcns_storage_socket);
-        }
+        append_socket_pair(dont_close, &n_dont_close, runtime->shared, runtime->shared->userns_storage_socket);
+        append_socket_pair(dont_close, &n_dont_close, runtime->shared, runtime->shared->netns_storage_socket);
+        append_socket_pair(dont_close, &n_dont_close, runtime->shared, runtime->shared->ipcns_storage_socket);
 
         if (runtime->dynamic_creds) {
                 if (runtime->dynamic_creds->user)
@@ -4327,15 +4335,21 @@ static int close_remaining_fds(
                         append_socket_pair(dont_close, &n_dont_close, runtime->dynamic_creds->group->storage_socket);
         }
 
-        if (params->user_lookup_fd >= 0)
-                dont_close[n_dont_close++] = params->user_lookup_fd;
+        append_one_fd(dont_close, n_dont_close, params->user_lookup_fd);
 
-        if (params->handoff_timestamp_fd >= 0)
-                dont_close[n_dont_close++] = params->handoff_timestamp_fd;
+        append_one_fd(dont_close, n_dont_close, params->handoff_timestamp_fd);
 
-        if (params->pidref_transport_fd >= 0)
-                dont_close[n_dont_close++] = params->pidref_transport_fd;
+        append_one_fd(dont_close, n_dont_close, params->pidref_transport_fd);
 
+        if (n_fds > 0) {
+                memcpy(dont_close + n_dont_close, fds, sizeof(int) * n_fds);
+                n_dont_close += n_fds;
+                n_total_fds += n_fds;
+        }
+
+#if BUILD_MODE_DEVELOPER
+        assert_se(n_total_fds == ELEMENTSOF(dont_close));
+#endif
         assert(n_dont_close <= ELEMENTSOF(dont_close));
 
         return close_all_fds(dont_close, n_dont_close);
